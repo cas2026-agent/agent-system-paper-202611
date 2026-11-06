@@ -1,0 +1,51 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # build.py writes index.html as an artifact fragment (no doctype/charset/viewport);
+      # claude.ai adds those at publish time, so Pages needs them prepended here.
+      - name: Build site
+        run: |
+          python build.py
+          mkdir -p _site
+          {
+            printf '%s\n' '<!doctype html>' '<html lang="zh-CN">' \
+              '<meta charset="utf-8">' \
+              '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            cat index.html
+          } > _site/index.html
+          cp -r figures _site/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
