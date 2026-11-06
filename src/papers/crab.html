@@ -1,0 +1,324 @@
+<article class="view frame paper" id="view-crab" data-paper="crab" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Crab: A Semantics-Aware Checkpoint/Restore Runtime for Agent Sandboxes</h1>
+  <p class="zh">Crab：面向智能体沙箱、能感知语义的检查点与恢复运行时</p>
+  <p class="by">Tianyuan Wu、Chaokun Chang、Lunxi Cao、Wei Gao、Wei Wang，香港科技大学</p>
+  <div class="meta">
+    <span class="venue">arXiv 2604.28138v1，cs.OS，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>操作系统</span><span>智能体沙箱</span><span>按需检查点</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>智能体沙箱为什么需要检查点</h2><span class="fn">Table 2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>场景</th><th>何时存档</th><th>何时恢复</th><th>存档数</th><th>主要需求</th></tr></thead>
+      <tbody>
+        <tr><td>故障恢复</td><td>频繁</td><td>出故障时</td><td>一个</td><td>快速快照</td></tr>
+        <tr><td>抢占式实例</td><td>收到抢占通知</td><td>新机器启动后</td><td>一个</td><td>快速迁移</td></tr>
+        <tr><td>树形强化学习</td><td>每个分支点</td><td>展开分支时</td><td>多个</td><td>快速复制</td></tr>
+        <tr><td>推测执行动作</td><td>频繁</td><td>猜错时</td><td>一个</td><td>快速存取</td></tr>
+        <tr><td>主动回滚</td><td>频繁</td><td>按需</td><td>多个</td><td>提供工具接口</td></tr>
+      </tbody>
+    </table></div>
+    <p>Claude Code、Codex 这类智能体在沙箱里编译项目、装依赖、起后台服务、反复改文件。它们的状态不只是对话记录，还包括内核能看到的一切：文件内容、长期运行的进程、装好的软件包[[os-actors]]。一旦沙箱崩溃，或者云上的抢占式实例被收回，这些状态就没了。长任务可能有上百轮，从头再来代价很大。</p>
+    <p>表中五种场景对检查点的时机和数量要求各不相同，但都离不开把沙箱完整状态快速存下来、再恢复出来的能力[[use-cases]]。其中树形强化学习从中间状态分叉出多条轨迹，推测执行先在复制的沙箱里试跑一个小模型猜的动作，主动回滚则把恢复作为一个工具交给智能体自己调用。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2></div>
+    <dl class="defs">
+      <dt>交互轮</dt><dd>智能体收到大模型回复、执行其中的工具调用、把结果发回大模型，这一来一回称为一轮。</dd>
+      <dt>两种部署方式</dt><dd>智能体在沙箱内：智能体进程本身跑在沙箱里（Claude Code、Codex）。智能体在沙箱外：智能体在外面通过命令接口操作沙箱（SWE-agent）。</dd>
+      <dt>检查点与恢复</dt><dd>把沙箱某一时刻的状态保存下来，之后能回到这个状态。</dd>
+      <dt>ZFS 快照</dt><dd>ZFS 文件系统的块级写时复制快照，只记录变化的块，实测每次约 12 到 22 毫秒。</dd>
+      <dt>CRIU 与 runc</dt><dd>CRIU 把运行中的进程连同内存完整写成镜像文件；runc 是容器运行时，负责管理容器生命周期并调用 CRIU。进程镜像的大小与进程占用的内存成正比。</dd>
+      <dt>eBPF</dt><dd>Linux 内核中可动态挂载的小程序，能低开销地观察系统调用等内核事件，不需要修改内核或被观察的程序。</dd>
+      <dt>cgroup 与软脏页</dt><dd>cgroup 把一组进程划为一个管理单元；软脏页是内核提供的页级标记，能查出某个进程自上次清零以来写过哪些内存页。</dd>
+      <dt>抢占式实例</dt><dd>云厂商的低价计算资源，随时可能被收回，通常提前几十秒到两分钟通知。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、洞见、设计、效果</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>只保存对话或文件的轻量恢复便宜但常常恢复错；每轮保存整个沙箱的做法正确但太贵，多个沙箱挤在一台机器上时更扛不住[[use-cases]]。</p></div>
+      <div class="step"><h3>根源</h3><p>智能体框架看得到工具调用，看不到它对操作系统的实际影响；操作系统看得到状态变化，却不知道哪一轮结束了、哪些变化值得保存[[gap]]。结果是超过 75% 的轮次其实什么都不用存[[sparsity]]。</p></div>
+      <div class="step key"><h3>设计</h3><p>把智能体当黑盒，在每一轮结束时观察它在操作系统里留下的实际变化，据此决定这一轮存什么[[insight]]；存档与等待大模型回复并行；一台机器上所有沙箱的存档任务统一排队调度。</p></div>
+      <div class="step"><h3>效果</h3><p>恢复正确率从只保存对话时的 8% 提到 100%；最多 87% 的轮次完全跳过存档；每个任务注入一次崩溃，总耗时仍只比不出故障、不做存档时多 1.9% 以内。</p></div>
+    </div>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>轻量恢复常常恢复错</h2><span class="fn">Figure 1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig1.png" alt="四种恢复策略下的解题率与耗时" loading="lazy"></button>
+    </figure>
+    <p>实验从 Terminal-Bench 里挑出 50 个能顺利完成的任务，在每条运行轨迹的随机位置注入一次故障，比较四种做法：不出故障（基准）、从头重来、只恢复对话、恢复对话加文件。上排 (a) 按录好的轨迹重放，排除模型随机性；下排 (b) 接真实的大模型服务。每排左边是解题率，右边是每个任务耗时的累积分布，曲线越靠右越慢。</p>
+    <p>从头重来能做对，但所有已完成的工作都要重做，中位耗时变为 1.81 倍（重放）和 1.55 倍（真实模型）。只恢复对话几乎都失败，重放下只解出 6%：对话里记着“已经装好了依赖、已经起了服务”，沙箱里却什么都没有。恢复对话加文件好一些，重放下 48%，但丢了进程状态，后台服务、进程内存里的数据都不在了。真实模型下这一项反而降到 34%：恢复出的环境和原来不一致，模型发现东西不对，会动手“修”，修的过程进一步偏离了原来的轨迹[[diverge]]。轻量恢复本质上不完整，能保证正确的只有从头重做[[lightweight]]。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">问题</span><h2>每轮全量存档扩展不了</h2></div>
+    <div class="fb">
+      <h3><span class="fn">Figure 2</span>存档请求来得有多密</h3>
+      <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig2.png" alt="每轮耗时分布与存档请求速率" loading="lazy"></button></figure>
+      <p>左侧是每一轮耗时的累积分布，中位数 3.34 秒，一个任务平均 117 轮。右侧是一台 128 核机器上存档请求的到达速率：放 100 个沙箱、每轮都存档时，中位每秒 17 个请求，90 分位每秒 26 个[[burst]]。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Figure 3</span>单次存档有多贵</h3>
+      <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig3.png" alt="ZFS 快照与 CRIU 进程存档耗时" loading="lazy"></button></figure>
+      <p>左侧是 ZFS 快照的耗时，几种文件操作下在 11.8 到 21.8 毫秒之间，很便宜。右侧是 CRIU 进程存档，横轴是同时进行的存档数，纵轴是耗时（对数刻度），四条线对应进程内存 128 MB 到 1 GB。同时做 16 个 128 MB 的存档要 1.3 秒，64 个 1 GB 的存档要 47 秒[[criu-cost]]。</p>
+      <p>瓶颈在进程状态：它和内存大小成正比，并发起来会抢满磁盘带宽。智能体框架本身常驻约 185 MB，工具运行时可能涨到 4 GB 以上，把两张图合起来看，每轮全量存档在高密度部署下扛不住。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">问题</span><span class="fn">Figure 4</span><h2>为什么光看工具调用判断不了</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig4.png" alt="工具调用分布与 shell 命令的语法线索" loading="lazy"></button></figure>
+    <p>上条是 Terminal-Bench 记录里各类工具调用的占比，执行任意 shell 命令的 run_shell_command 占 60%。下条是这些 shell 命令里带有明显副作用语法的比例，70% 没有任何线索。</p>
+    <p>直觉上可以按工具类型判断要不要存档，比如读文件不用存、写文件要存。但最常用的工具是“执行一条命令”，<code>python arbitrary_script.py</code> 可能改文件、可能起常驻进程、也可能只打印输出，工具签名完全一样[[opaque]]。靠语法也推不出来：12,483 条命令里只有 5.3% 含重定向、1.0% 后台执行、16.2% 用管道[[syntax]]。把所有命令都当成有副作用，就退回了全量存档；按工具名或语法猜，就会恢复错误。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">设计</span><h2>架构：宿主机上的透明运行时</h2><span class="fn">Figure 5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig5.png" alt="Crab 架构" loading="lazy"></button>
+    </figure>
+    <p>中间是三个沙箱，分别跑着 Claude Code、SWE-agent 和 Codex。黄色是 Crab 的组件：用户态的 Coordinator 架在智能体和LLM API 之间，所有 LLM request 和回复都经过它；内核里的 Inspector eBPF 程序观察每个沙箱的系统调用，用户态的 Inspector 守护进程汇总结果；右侧的 C/R Engine 包含调度器、执行存档的 Worker 和管理版本的 Manager，底层调用 CRIU 和 ZFS。智能体和 CRIU、ZFS 都不需要修改。</p>
+    <p>组件放在宿主机上有它的道理。如果每个沙箱配一个旁路进程，它只能看到自己的沙箱，无法协调整台机器上的存档流量；如果只在内核里做，能看到操作系统的变化，却不知道一轮何时结束、大模型何时在思考，也就没法把存档藏进等待时间[[kernel-only]]。只有宿主机上的运行时既能拿到轮次的语义（通过拦截 LLM request），又能看到所有沙箱的内核事件。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">设计</span><h2>一轮结束时发生了什么</h2><span class="src">Figure 6、§5.1</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/crab/fig6.png" alt="Crab 工作流时间线" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>横轴是时间，每一行是一个参与者：智能体与沙箱、Coordinator、调度器、Worker、Manager、Inspector、大模型服务。第 i 轮的工具执行完，智能体向大模型发 LLM request，Coordinator 拦下（1）并立刻转发（2），这个 LLM request 的出现就标志着第 i 轮结束。随后它问 Inspector 这一轮改了什么（3），决定跳过还是存文件、存进程或两者都存，把任务交给 C/R Engine（4），调度器安排 Worker 去做（5）。这些都发生在大模型思考的那几秒里。</p>
+        <p>大模型的回复回来时，Coordinator 再次拦下（6）。如果第 i 轮的存档已经完成，回复立刻交给智能体，第 i+1 轮开始（7）；如果还没完成，就扣住回复，等存档做完再放行。这道闸门保证任何一轮开始前，上一轮的状态都已经安全落盘，同时把存档的等待只暴露在它超过大模型思考时间的那部分[[gate]]。若回复已到而存档未完成，Coordinator 还会把这个任务提升为高优先级，让调度器先处理已经卡住智能体的存档。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">设计</span><h2>Inspector：判断这一轮改了什么</h2><span class="src">Figure 7、§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig7.png" alt="净变化的判定示例" loading="lazy"></button>
+    </figure>
+    <p>四行各是一个文件或进程从上次存档（灰色箭头）到本次查询（黄色箭头）的经历，橙色长条是它的存在期，斜线块是被修改的时段。第一行在上次存档后被创建，但查询前就消失了，判定为没变；后三行在查询时仍然存在、新建或被改过，判定为有变化。</p>
+    <p>这就是“净变化”的含义：只看从上次存档到现在，最后留下了什么[[netchange]]。shell 每执行一条命令都会派生短命的子进程，很多工具也会写临时文件再删掉，如果把这些都算作变化，几乎每一轮都得存档。文件方面，eBPF 挂在系统调用入口和出口，记录沙箱内进程的创建、删除、改名和写入，标准输出这类特殊句柄除外，守护进程据此计算净变化。进程方面，用 cgroup 判断沙箱里是否有进程新增或退出，对一直活着的进程，读它的软脏页标记看有没有写过内存。每次存档完成后把记录和标记清零，作为下次比较的起点。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">设计</span><h2>C/R Engine：调度、执行、版本</h2><span class="src">Figure 8、§5.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig8.png" alt="版本化的恢复点与存档生命周期" loading="lazy"></button>
+    </figure>
+    <p>左图横轴是轮次，FS 行和 Proc 行标出哪些轮存了文件、哪些轮存了进程。第 0 轮两者都存，得到恢复点 C<sub>0</sub>=(P<sub>0</sub>, F<sub>0</sub>)；第 1 轮只改了文件，新的恢复点是 C<sub>1</sub>=(P<sub>0</sub>, F<sub>1</sub>)，进程部分沿用第 0 轮的；第 2 轮什么都没改，不产生新恢复点。由于每次存档可能只覆盖一半状态，单个存档文件本身不能用来恢复，Manager 把“最近的进程镜像加最近的文件快照”组合成一个版本，形成类似 git 的版本历史[[manifest]]，可以回到其中任意一个。右图是一次存档的生命周期：排队、写入、组合版本、成功；任何一步出错或被打断就标为失败，绝不会被当作恢复点使用[[failed]]。</p>
+    <p>调度器用两个先进先出队列。新任务进普通队列，因为它的耗时还能被大模型思考时间盖住；一旦对应的回复已经回来，任务被提升到高优先级队列，Worker 总是先处理高优先级的。每个任务迟早会因回复到达而被提升，或者在此之前已经完成，不会饿死[[starvation]]。这样，有限的磁盘带宽优先用在已经让智能体等着的存档上。文件快照用 ZFS，进程存档用 runc 调用 CRIU，Worker 的数量设成刚好跑满磁盘带宽。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">设计</span><h2>两种部署方式下的恢复</h2><span class="src">Figure 9、§6</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig9.png" alt="快进机制示例" loading="lazy"></button>
+    </figure>
+    <p>智能体在沙箱外时，沙箱可能在一条命令执行到一半时崩溃。存档只在轮次边界进行，恢复出来的沙箱里没有这条命令的痕迹，而外面的智能体正等着它的结果。Coordinator 在转发每条命令前先记日志，恢复后发现有未完成的命令就重新执行[[reissue]]，智能体只看到命令正常返回。</p>
+    <p>智能体在沙箱内时问题更微妙。智能体进程每一轮都会改自己的内存，如果把它当普通进程跟踪，几乎每轮都要做昂贵的进程存档[[exclude-agent]]，所以 Crab 不跟踪智能体进程本身。代价是恢复时智能体的内存可能比文件旧。图中最新的恢复点是 C<sub>4</sub>=(P<sub>2</sub>, F<sub>3</sub>)，智能体的记忆停在第 2 轮，文件已到第 3 轮。第 3 轮执行的是 <code>echo "b" &gt;&gt; foo</code>，如果让智能体照常继续，它会再追加一次，文件变成 “abb”。Coordinator 缓存了所有 LLM request 和回复，恢复后智能体重发第 3 轮的 LLM request时，Coordinator 认出这是重复的 LLM request，直接从缓存返回当时的回复，而不真正去执行动作[[fastforward]]，直到智能体的进度追上文件状态，foo 的内容保持正确的 “ab”。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验的整体逻辑</h2>
+    <p>先问恢复得对不对，再问代价有多大，最后看调度和其他用途。所有实验按录好的轨迹确定性重放[[replay-eval]]，排除模型随机性，只比较存档、恢复和调度的影响。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="tbl"><table>
+      <thead><tr><th>实验</th><th class="wrap">要回答的问题</th><th class="wrap">改变什么</th><th class="wrap">看什么指标</th></tr></thead>
+      <tbody>
+        <tr><td>恢复正确率</td><td class="wrap">崩溃后恢复出来的状态对吗？</td><td class="wrap">恢复方案、智能体</td><td class="wrap">恢复后解题率、Inspector 漏报率</td></tr>
+        <tr><td>存档频率</td><td class="wrap">真的有很多轮不用存吗？</td><td class="wrap">智能体</td><td class="wrap">各类存档决定的占比</td></tr>
+        <tr><td>端到端耗时</td><td class="wrap">崩溃一次后总共慢多少？</td><td class="wrap">恢复方案、每台机器的沙箱数</td><td class="wrap">任务耗时分布、中位数</td></tr>
+        <tr><td>开销和调度</td><td class="wrap">时间花在哪，存档能否藏起来？</td><td class="wrap">沙箱数、模型思考时间、调度方式</td><td class="wrap">存档耗时、因等待多花的时间占比</td></tr>
+        <tr><td>其他用途</td><td class="wrap">检查点还能用来做什么？</td><td class="wrap">回滚、推测执行、抢占、强化学习</td><td class="wrap">任务耗时、token 消耗</td></tr>
+      </tbody>
+    </table></div>
+    <p>每个任务在随机位置注入一次崩溃。对比的基线有四个：只恢复对话、恢复对话加文件、从头重来、每轮全量存档。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><span class="fn">Table 3</span><span class="fn">Figure 11</span><h2>被测负载</h2></div>
+    <div class="tbl"><table>
+      <thead><tr><th>智能体</th><th>部署方式</th><th>测试集</th><th>大模型</th></tr></thead>
+      <tbody>
+        <tr><td>Claude-code</td><td>在沙箱内</td><td>Terminal-Bench</td><td>Claude 4.6 Opus</td></tr>
+        <tr><td>iFlow-cli</td><td>在沙箱内</td><td>Terminal-Bench</td><td>iFlow-ROME</td></tr>
+        <tr><td>SWE-agent</td><td>在沙箱外</td><td>SWE-bench</td><td>MiniMax-M2.7</td></tr>
+      </tbody>
+    </table></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig11.png" alt="每轮大模型时间与工具时间分布" loading="lazy"></button></figure>
+    <p>两个测试集考察的状态不同。Terminal-Bench 直接在运行任务的沙箱里验收，中间文件、进程都影响结果；SWE-bench 主要看最终的代码补丁。图中左侧是每轮大模型思考时间，中位数 1.8 到 3.7 秒，这就是可以用来藏存档的窗口；右侧是每轮工具执行时间。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>恢复得对不对</h2></div>
+    <div class="fb">
+      <h3><span class="fn">Figure 12</span>崩溃恢复后还能解出题吗</h3>
+      <div class="bars" data-lin="0,100" style="--lw:150px">
+      <div class="legend"><span><i class="sw a"></i>Crab、从头重来、全量存档</span><span><i class="sw b"></i>对话加文件</span><span><i class="sw g"></i>只恢复对话</span></div>
+      <div class="grp">Claude-code，Terminal-Bench</div>
+      <div class="row"><span class="name">恢复后解题率 %</span><div class="track"><div class="bar a" data-v="100"><i>100</i></div><div class="bar b" data-v="28"><i>28</i></div><div class="bar g" data-v="13"><i>13</i></div></div></div>
+      <div class="grp">iFlow-cli，Terminal-Bench</div>
+      <div class="row"><span class="name">恢复后解题率 %</span><div class="track"><div class="bar a" data-v="100"><i>100</i></div><div class="bar b" data-v="42"><i>42</i></div><div class="bar g" data-v="8"><i>8</i></div></div></div>
+      <div class="grp">SWE-agent，SWE-bench</div>
+      <div class="row"><span class="name">恢复后解题率 %</span><div class="track"><div class="bar a" data-v="100"><i>100</i></div><div class="bar b" data-v="100"><i>100</i></div><div class="bar g" data-v="9"><i>9</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="25">25</span><span data-t="50">50</span><span data-t="75">75</span><span data-t="100">100</span></div></div>
+    </div>
+      <p>指标是恢复后任务的解题率。Crab、从头重来和每轮全量存档在三组配置中都是 100%。对话加文件在 SWE-bench 上也是 100%，在 Terminal-Bench 上只有 28% 和 42%：SWE-bench 的轨迹很少起需要跨越崩溃存活的常驻进程[[swe-vs-tb]]，Terminal-Bench 经常依赖后台服务和进程状态。只恢复对话只有 8% 到 13%。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Table 4</span>Inspector 会漏判吗</h3>
+      <div class="tbl"><table>
+      <thead><tr><th>Inspector 判定</th><th class="r">人工标注有变化</th><th class="r">判定有变化</th><th class="r">准确率</th><th class="r">误报率</th><th class="r">漏报率</th></tr></thead>
+      <tbody>
+        <tr><td>进程变化</td><td class="r">4.8%（99 轮）</td><td class="r">4.8%（99 轮）</td><td class="r">100.0%</td><td class="r">0.0%</td><td class="r">0.0%</td></tr>
+        <tr><td>文件变化</td><td class="r">27.9%（575 轮）</td><td class="r">29.5%（609 轮）</td><td class="r">98.3%</td><td class="r">2.3%</td><td class="r">0.0%</td></tr>
+      </tbody>
+    </table></div>
+      <p>正确率的前提是 Inspector 不漏判。在 2,063 个人工标注的轮次上，进程和文件变化的漏报率都是零[[fnr]]。文件有 2.3% 的误报，来自按整个文件跟踪。误报只会多做一次几十毫秒的文件快照[[fp]]，漏报则会导致恢复错误，这个取舍偏向安全一侧是合理的。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>大多数轮次不需要存档</h2><span class="fn">Figure 13</span></div>
+    <div class="lane"><span class="lab">Claude-code</span><div class="stack"><span class="s-c" style="width:87%">跳过 87%</span><span class="s-b" style="width:5%"></span><span class="s-a" style="width:8%">8%</span></div></div>
+    <div class="lane"><span class="lab">iFlow-cli</span><div class="stack"><span class="s-c" style="width:70%">跳过 70%</span><span class="s-b" style="width:25%">仅文件 25%</span><span class="s-a" style="width:5%"></span></div></div>
+    <div class="lane"><span class="lab">SWE-agent</span><div class="stack"><span class="s-c" style="width:75%">跳过 75%</span><span class="s-b" style="width:25%">仅文件 25%</span></div></div>
+    <p class="cap">浅灰色是完全跳过，浅色是只存文件，深色是文件和进程都存。Claude-code 的仅文件部分为 5%，iFlow-cli 的全量部分为 5%。</p>
+    <p>三种智能体有 70% 到 87% 的轮次什么都不用存[[skip87]]，它们只是读文件、查看输出、思考下一步。真正需要存进程状态的只有 5% 到 8%，SWE-bench 上几乎为零。这组数字解释了 Crab 的开销为什么能这么低：昂贵的进程存档只发生在少数轮次，其余要么跳过，要么只做几十毫秒的文件快照。它也说明“智能体操作系统状态稀疏变化”是负载本身的性质，三种智能体、两个测试集上都成立。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">结果</span><h2>端到端耗时：每个任务崩溃一次</h2><span class="fn">Figure 15</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/crab/fig15.png" alt="不同部署密度下的端到端耗时分布" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="bars" data-lin="0,500" style="--lw:96px">
+          <div class="legend"><span class="muted">Claude-code，每台机器 96 个沙箱，任务耗时中位数（秒）</span></div>
+          <div class="row"><span class="name">无故障无存档</span><div class="track"><div class="bar g tall" data-v="126"><i>126</i></div></div></div>
+          <div class="row"><span class="name">Crab</span><div class="track"><div class="bar a tall" data-v="127"><i>127</i></div></div></div>
+          <div class="row"><span class="name">从头重来</span><div class="track"><div class="bar b tall" data-v="201"><i>201</i></div></div></div>
+          <div class="row"><span class="name">每轮全量存档</span><div class="track"><div class="bar b tall" data-v="476"><i>476</i></div></div></div>
+          <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="250">250</span><span data-t="500">500</span></div></div>
+        </div>
+        <p>只比较能保证正确恢复的方案。左图的行是三种智能体，列是每台机器放 16、32、64、96 个沙箱，每个小图是任务耗时的累积分布。</p>
+      </div>
+    </div>
+    <p>Crab 在所有配置下都只比不出故障、不做存档的理想情况多 0 到 1.9%，曲线几乎和理想曲线重合。从头重来最多慢 1.52 倍（Terminal-Bench）和 1.67 倍（SWE-bench），因为随机位置的崩溃平均会浪费一半已完成的工作，还要重启沙箱[[restart]]。每轮全量存档在 SWE-bench 上表现不错，那里的轮次几乎只改文件，文件快照很便宜；但在 Terminal-Bench 上随密度增加迅速恶化，Claude-code 在 64 和 96 个沙箱时分别慢到 3.06 倍和 3.78 倍，比从头重来还差[[fullckpt]]。右侧条形图是最拥挤时的情况：全量存档的中位耗时 476 秒，是理想情况的近四倍，原因是几十个沙箱同时做进程存档，抢光了磁盘带宽。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>各部分的开销</h2><span class="fn">Figure 17</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig17.png" alt="存档耗时分布与构成" loading="lazy"></button>
+    </figure>
+    <p>左图是存档耗时的直方图（横轴对数刻度），呈两个峰：20 到 100 毫秒的一峰是只存文件，700 到 1000 毫秒的一峰是存进程[[bimodal]]。整体中位数 0.1 秒、95 分位 0.7 秒、99 分位 1.0 秒。右图把存档按耗时从快到慢分成十档，看每档由什么构成：前七成几乎全是 50 毫秒内完成的文件快照，接近一秒的长尾几乎全部来自进程存档。</p>
+    <p>不在存档路径上的两个组件开销很小。Coordinator 在大模型调用路径上，每轮中位只加 16 到 18 微秒，95 分位不超过 40 微秒，比大模型和工具的耗时小四五个数量级，占比不到 0.02%[[coord]]。Inspector 每轮中位 31 到 72 毫秒，95 分位不超过 200 毫秒，而且与大模型思考并行，通常不会让智能体等待；智能体在沙箱内时它要多跟踪智能体进程的系统调用，所以更慢一些。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>存档能藏多少，调度帮多少</h2><span class="fn">Figure 18</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig18.png" alt="暴露延迟随密度与调度策略的变化" loading="lazy"></button>
+    </figure>
+    <p>纵轴都是累积分布，横轴是每个任务因等待存档而多花的时间占总时间的百分比。左图比较不同密度，四条曲线在 0 处就几乎升到顶，中位数在所有密度下都是 0，也就是至少一半的任务从未因存档等待过。95 分位在 16、32、64、96 个沙箱时分别是 0.00%、0.37%、0.44% 和 3.65%[[exposed]]。</p>
+    <p>右图是压力测试：96 个沙箱，并把大模型思考时间人为缩短到原来的 0.2、0.4、0.6 倍。思考时间变短，一方面能藏存档的窗口变小，另一方面每轮变快、存档请求来得更密。在这种情况下，按“是否已经卡住智能体”区分优先级的调度，比简单先来先做把等待时间的中位数降低最多 41.6%，95 分位降低最多 31.3%[[reactive]]。随着大模型推理越来越快，可用来掩藏存档的时间会缩短，调度的作用会越来越重要。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">案例</span><h2>把回滚交给智能体</h2><span class="fn">Figure 19</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/crab/fig19.png" alt="主动回滚案例对比" loading="lazy"></button>
+    </figure>
+    <p>这个案例估算把回滚作为工具交给智能体能省多少。它在录好的轨迹上把清理片段替换成回滚调用计算得到，没有让智能体实际重新运行。每个案例上面是实际的执行过程，下面是假如有 rollback() 工具时的过程，绿色是有效推进，红色是手动收拾残局，橙色是卡住，蓝色是一次回滚（按实测 99 分位约 1 秒计算）。</p>
+    <p>案例 A 是用 QEMU 启动一个 Alpine 系统，原轨迹 52 步、434 秒，其中 6 段收拾残局用掉 17 步、30.7% 的时间和一半的 token。最耗时的是一段约三分钟的僵局：一个杀不掉的 QEMU 进程一直占着 6665 端口，智能体反复 kill -9 也没用[[qemu]]。换成回滚后总时间降到 307 秒，少了 29%，回到一个干净的已知状态也就不会出现这种僵局。案例 B 是给 17 份票据分类，智能体先后写了四个分类脚本，前三个都错了，每次都要用同样的 mv 和 rm 命令把文件搬回去。这里时间只省了 2.9%，因为时间主要花在思考错在哪，但收拾残局用掉的 token 少了 36%，而且手写的清理命令对路径很敏感，容易出错。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">案例</span><h2>另外三种用途</h2></div>
+    <div class="fb">
+      <h3><span class="fn">Figure 21</span>推测执行</h3>
+      <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig21.png" alt="推测执行的任务耗时与猜错代价" loading="lazy"></button></figure>
+      <p>每一轮让一个比主模型快 10 倍、只有一半概率猜对的小模型先给出动作，在复制出来的沙箱里先执行；主模型算出真正的动作后，一致就直接采用，不一致就丢掉复制。任务中位耗时从 224 秒降到 206 秒，快了 7.9%，猜错带来的额外等待中位只有 2.2 秒。由于大多数轮次不改状态，58% 的复制请求可以直接复用上一轮的复制[[spec]]。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Figure 20</span>抢占迁移和树形强化学习</h3>
+      <figure class="fig"><button class="zoom" type="button"><img src="figures/crab/fig20.png" alt="抢占次数与强化学习 token 节省" loading="lazy"></button></figure>
+      <p>左半是抢占迁移：沙箱提前 60 秒收到通知后存档，新机器准备好后恢复，存档加恢复不到 1 秒[[spot]]。即使存储带宽只有 500 MB/s、96 个沙箱、每个任务被抢占 1 到 5 次，中位耗时也只增加 0.45% 到 3.01%。</p>
+      <p>右半是树形强化学习：先跑一条轨迹，再从中间随机一点分出更多分支，比较从头重跑共享前缀和从存档直接恢复。分支数 1 到 5 时 token 消耗少了 40.0% 到 64.2%[[rl]]。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>智能体沙箱里积累的操作系统状态，现有的检查点机制要么抓不全，要么抓得太多。原因在于智能体框架和操作系统各自只掌握一半信息。Crab 的做法是站在两者之间：从LLM request 里得到“一轮结束了”的信号，从内核里得到“这一轮实际留下了什么”的信号，二者结合，只在需要时以需要的粒度存档，把存档藏进大模型思考的时间，并在整台机器的范围内调度存档流量。</p>
+    <p>结果是在 Terminal-Bench 和 SWE-bench 上恢复正确率从 8% 提到 100%，最多 87% 的轮次免于存档，每个任务崩溃一次时总耗时仍在理想情况的 1.9% 以内。更一般地，对一个看不透内部逻辑的程序，它在操作系统里留下的可见痕迹可以作为轻量的语义信号，同样的思路可用于沙箱的调度、资源隔离和安全审计[[conclusion]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>实验按录好的轨迹确定性重放，并只挑选了能顺利完成的任务。这样做能干净地衡量存档本身的开销和正确性，但没有覆盖真实运行中模型随机性、任务失败等情况；主动回滚、推测执行两个案例也是在录好的轨迹上模拟出来的，智能体实际学会使用回滚工具后的效果还需要真实运行来验证。Inspector 的准确率是在 iFlow-cli 的 2,063 个轮次上人工标注得到的，其他智能体和任务类型上是否同样零漏报，没有单独报告。</p>
+    <p>Crab 判断的是“状态有没有变”，进程一旦变了仍要做完整的 CRIU 存档，这一部分的耗时（接近一秒）和内存大小成正比，也是长尾延迟的来源；大模型推理变快时，能掩藏它的时间会缩短。智能体在沙箱内时不跟踪智能体自身，恢复依赖缓存的大模型回复做快进，这要求智能体在相同输入下会重发相同的 LLM request。系统依赖宿主机上的 ZFS、CRIU 和 eBPF，实验只使用了 runc 容器，在 Firecracker 这类轻量虚拟机沙箱上的表现没有评估。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="use-cases"><blockquote lang="en">Checkpoint and restore (C/R) of this state is needed for fault tolerance, spot execution, RL rollout branching, and safe rollback—yet existing approaches fall into two extremes: application-level recovery preserves chat history but misses OS-side effects, while full per-turn checkpointing is correct but too expensive under dense co-location.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="gap"><blockquote lang="en">The root cause is an agent–OS semantic gap: agent frameworks see tool calls but not their OS effects; the OS sees state changes but lacks turn-level context to judge recovery relevance.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="sparsity"><blockquote lang="en">This gap hides massive sparsity: over 75% of agent turns produce no recovery-relevant state, so most checkpoints are unnecessary.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="os-actors"><blockquote lang="en">Agents are therefore OS-level actors whose effective state spans the conversation history and kernel-visible state—filesystem contents, long-lived processes, and installed packages.</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="insight"><blockquote lang="en">Our key insight is that the runtime can treat the agent as a black box and instead observe OS-visible effects at turn boundaries to decide checkpoint granularity.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="diverge"><blockquote lang="en">once the recovered environment diverges from the original execution, the agent may notice missing state and take corrective actions that further perturb the run.</blockquote><p class="loc">第 3.1 节，第 3 页</p></li>
+      <li data-key="lightweight"><blockquote lang="en">In short, lightweight recovery is fundamentally incomplete, while restart-based recovery is correct only by re-executing all prior work.</blockquote><p class="loc">第 3.1 节，第 3 页</p></li>
+      <li data-key="burst"><blockquote lang="en">With 100 sandboxes per host (128 cores), naively checkpointing every turn yields a median checkpoint arrival rate of 17 requests/s and a p90 of 26 requests/s (Figure 2 (right)).</blockquote><p class="loc">第 3.2 节，第 4 页</p></li>
+      <li data-key="criu-cost"><blockquote lang="en">even 16 concurrent 128 MB dumps prolong dump time to 1.3 s, while 64 concurrent 1 GB dumps take 47 s.</blockquote><p class="loc">第 3.2 节，第 4 页</p></li>
+      <li data-key="opaque"><blockquote lang="en">At the API level, a call like python arbitrary_script.py may modify files, spawn long-lived processes, or simply produce output—yet the tool signature is identical in each case.</blockquote><p class="loc">第 3.3 节，第 4 页</p></li>
+      <li data-key="syntax"><blockquote lang="en">Even explicit syntactic signals are rare: among 12,483 shell commands in our traces, only 5.3% contain redirection, 1.0% use background execution, and 16.2% involve pipes.</blockquote><p class="loc">第 3.3 节，第 4 页</p></li>
+      <li data-key="kernel-only"><blockquote lang="en">A kernel-only design can observe OS effects but does not naturally expose turn boundaries or the LLM wait windows needed to hide checkpoint latency</blockquote><p class="loc">第 4.2 节，第 5 页</p></li>
+      <li data-key="gate"><blockquote lang="en">Checkpoint latency is therefore exposed to the agent only when it exceeds the LLM wait window.</blockquote><p class="loc">第 5.1 节，第 6 页</p></li>
+      <li data-key="netchange"><blockquote lang="en">Transient effects that have already disappeared are ignored; only persistent effects—a file that remains created or modified, a process that remains alive, or memory pages dirtied by a long-running process—are reported.</blockquote><p class="loc">第 5.2 节，第 7 页</p></li>
+      <li data-key="starvation"><blockquote lang="en">Starvation cannot occur: every pending job is eventually promoted when its LLM response arrives, or has already completed in the normal queue before promotion is needed.</blockquote><p class="loc">第 5.3 节，第 7 页</p></li>
+      <li data-key="manifest"><blockquote lang="en">In this way, the Manager maintains a git-like version history of recoverable states even though individual checkpoint operations update only part of the sandbox state.</blockquote><p class="loc">第 5.3 节，第 7 页</p></li>
+      <li data-key="failed"><blockquote lang="en">If interruption or failure occurs at any point, the checkpoint is marked “failed” and never exposed as a recovery point.</blockquote><p class="loc">第 5.3 节，第 8 页</p></li>
+      <li data-key="reissue"><blockquote lang="en">If the sandbox is restored before the command completes, the Coordinator detects the outstanding entry and reissues the command against the recovered sandbox.</blockquote><p class="loc">第 6 节，第 8 页</p></li>
+      <li data-key="exclude-agent"><blockquote lang="en">If the Inspector were to track the agent as an ordinary sandbox process, nearly every turn would appear to modify process memory, forcing an expensive process checkpoint at turn frequency and defeating selective checkpointing.</blockquote><p class="loc">第 6 节，第 8 页</p></li>
+      <li data-key="fastforward"><blockquote lang="en">After restore, when the stale agent replays an earlier request, the Coordinator recognizes it as a repeated interaction and returns a synthetic response from the cached history instead of forwarding it to the LLM.</blockquote><p class="loc">第 6 节，第 8 页</p></li>
+      <li data-key="replay-eval"><blockquote lang="en">Our experiments replay these recorded traces deterministically.</blockquote><p class="loc">第 7.1 节，第 9 页</p></li>
+      <li data-key="swe-vs-tb"><blockquote lang="en">The key difference is that SWE-bench trajectories rarely create long-lived processes whose state must survive recovery, so restoring the filesystem is usually sufficient.</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="fnr"><blockquote lang="en">The Inspector has zero false negatives (FNs) for both process and filesystem changes, ensuring that no required state is missed.</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="fp"><blockquote lang="en">This over-approximation is acceptable because it only causes an extra filesystem checkpoint, which is inexpensive (only tens of milliseconds, as shown in Figure 3 (left)).</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="skip87"><blockquote lang="en">As shown in Figure 13, up to 87% of turns are skipped entirely because they change neither process nor filesystem state.</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="restart"><blockquote lang="en">because a random crash wastes roughly half of the prior work in expectation and also incurs sandbox restart overhead.</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="fullckpt"><blockquote lang="en">For example, at densities of 64 and 96 sandboxes per host, FullCkpt for Claude-code slows execution by 3.06× and 3.78× due to host storage bandwidth contention, respectively, even worse than restarting from scratch.</blockquote><p class="loc">第 7.2 节，第 10 页</p></li>
+      <li data-key="bimodal"><blockquote lang="en">The fast mode corresponds to filesystem-only checkpoints, while the slow mode corresponds to process checkpoints.</blockquote><p class="loc">第 7.3 节，第 11 页</p></li>
+      <li data-key="coord"><blockquote lang="en">Compared with LLM and tool latency (Figure 11), this is 4–5 orders of magnitude smaller and contributes less than 0.02% overhead.</blockquote><p class="loc">第 7.3 节，第 11 页</p></li>
+      <li data-key="exposed"><blockquote lang="en">Even at the 95th percentile, exposed delay remains small: 0.00%, 0.37%, 0.44%, and 3.65% at densities 16, 32, 64, and 96.</blockquote><p class="loc">第 7.4 节，第 12 页</p></li>
+      <li data-key="reactive"><blockquote lang="en">Overall, reactive scheduling reduces median exposed delay by up to 41.6% and p95 delay by up to 31.3%.</blockquote><p class="loc">第 7.4 节，第 12 页</p></li>
+      <li data-key="qemu"><blockquote lang="en">The main inefficiency is a ~3-minute partial-cleanup (self-recovery) and stall in which an unkillable QEMU process keeps port 6665 occupied despite repeated kill -9 attempts (RB2/RB4).</blockquote><p class="loc">第 7.5 节，第 12 页</p></li>
+      <li data-key="spec"><blockquote lang="en">Since the majority of turns are stateless, 58.0% of fork requests during execution reuse the fork from the previous turn because the sandbox state has not changed, which avoids a fresh clone and restore.</blockquote><p class="loc">第 7.5 节，第 13 页</p></li>
+      <li data-key="spot"><blockquote lang="en">Checkpoint and restore together complete in under 1 s (median/p95: 0.71/1.00 s), so migration overhead is fully hidden whenever provisioning finishes within the 60 s grace period.</blockquote><p class="loc">第 7.5 节，第 13 页</p></li>
+      <li data-key="rl"><blockquote lang="en">Across them, Crab reduces rollout tokens by 40.0–64.2%, showing that efficient C/R can eliminate redundant prefix re-execution and reduce RL post-training cost.</blockquote><p class="loc">第 7.5 节，第 13 页</p></li>
+      <li data-key="conclusion"><blockquote lang="en">More broadly, our results suggest that OS-visible effects of opaque workloads can serve as lightweight semantic signals for adaptive state management—a principle applicable beyond C/R to scheduling, resource isolation, and security auditing of agent sandboxes.</blockquote><p class="loc">第 9 节，第 13 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

@@ -1,0 +1,407 @@
+<article class="view frame paper" id="view-agentservesim" data-paper="agentservesim" hidden>
+
+<header class="masthead">
+  <h1 lang="en">AgentServeSim: Serving-System Simulation and Policy Search for LLM Agent Programs</h1>
+  <p class="zh">AgentServeSim：面向 LLM 智能体程序的推理服务模拟与策略搜索</p>
+  <p class="by">Rakibul Hasan Rajib、Mengxin Zheng、Qian Lou，University of Central Florida</p>
+  <div class="meta">
+    <span class="venue">arXiv 2606.09613v3，预印本，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>大模型推理服务</span><span>性能模拟器</span><span>智能体程序级</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2></div>
+    <div class="tree">
+      <div>大模型推理服务引擎：vLLM（组批、KV 缓存管理、前缀缓存）</div>
+      <div style="--d:1">请求级服务模拟器：Vidur、APEX、LLMServingSim</div>
+      <div style="--d:2">有状态请求链、因果释放：Frontier</div>
+      <div style="--d:3" class="on"><b>program 级、KV 保留与调度可编程：AgentServeSim</b></div>
+    </div>
+    <p>推理服务研究有两条线。一条是为智能体设计新的服务策略：InferCept 和 Continuum 研究工具调用间隙里 KV 缓存怎么留，Autellix 按 program 而不是按 request 排队，SMetric 按会话分配机器[[policies]]。另一条是模拟器：用真机上测出的算子耗时，在 CPU 上推算服务性能，省掉昂贵的 GPU 实验。两条线此前没有接上，现有模拟器表达不了前一条线里的那些策略。</p>
+    <p>AgentServeSim 建在 <a class="plink ls-t" href="#llmservingsim">LLMServingSim 2.0</a> 之上，加了一层 program 层，使这些智能体专用的策略能在模拟器里组合、比较。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2></div>
+    <dl class="defs">
+      <dt>program</dt><dd>一次智能体任务的完整执行：调用大模型、等工具、再调用大模型，如此交替。论文也把它叫 job，比如解决一个 SWE-bench 问题就是一个 program。</dd>
+      <dt>turn</dt><dd>program 中的一次大模型调用（论文也叫 call）。后一个 turn 的输入包含前面所有 turn 的内容。</dd>
+      <dt>tool gap</dt><dd>两个 turn 之间等待工具执行的时间。</dd>
+      <dt>KV 缓存</dt><dd>模型为已处理的每个 token 存下的中间结果，生成后续 token 时复用。它存在显存里，是推理服务最紧张的资源。</dd>
+      <dt>前缀缓存</dt><dd>新输入开头和已缓存的内容相同时，直接复用这部分 KV 缓存，跳过计算。</dd>
+      <dt>prefill 与 decode</dt><dd>prefill 一次性处理输入，计算量大；decode 逐个生成输出 token。KV 缓存被丢掉后，下一个 turn 要把整段上下文重新 prefill。</dd>
+      <dt>JCT</dt><dd>job completion time，一个 program 从到达到最后一个 turn 完成的总时长，是本文的主要指标。</dd>
+      <dt>TP</dt><dd>张量并行度，TP2 表示模型切分到 2 块 GPU 上运行。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、抽象、验证、应用</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>智能体的完成时间取决于推理引擎的三个决定：KV 缓存留不留、下一个 turn 派到哪台机器、和其他 program 谁先执行[[jct-depends]]。在真机上逐个试太贵[[gpu-hours]]，现有模拟器又以单个 request 为单位，表达不了它们[[request-level]]。</p></div>
+      <div class="step key"><h3>抽象</h3><p>把 program 看作操作系统里的进程[[os-analogy]]：下一个 turn 何时出现由模拟本身算出来；三个决定做成可替换的策略代码。</p></div>
+      <div class="step"><h3>验证</h3><p>让模拟器和真实 vLLM 运行相同的策略和负载，比较完成时间。20 组对照的平均 JCT 误差，在 B200 上不超过 5.5%，在显存紧张的 RTX PRO 6000 上不超过 5.2%。</p></div>
+      <div class="step"><h3>应用</h3><p>每个模拟点约 1 个 CPU 核时，真机要占两块 GPU 跑 3 到 6 小时[[cost]]。于是可以大量比较策略组合，并让大模型自动改写策略代码。</p></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">机制</span><h2>推理引擎在管理什么</h2><span class="src">§3.1、Figure 1</span></div>
+    <p>谈策略之前要先看被管理的对象。一台 GPU 上运行一个服务实例，下面是一个 turn 在实例里经过的路径，以及它结束后留下的东西。</p>
+    <div class="chain">
+      <div class="node"><b>turn 到达</b><small>多个实例时先选一个</small></div><span class="arr">→</span>
+      <div class="node"><b>排队</b><small>实例内的等待队列</small></div><span class="arr">→</span>
+      <div class="node"><b>进入批次</b><small>多个 turn 拼在一起算</small></div><span class="arr">→</span>
+      <div class="node"><b>prefill、decode</b><small>KV 缓存写入显存里的 KV 池</small></div><span class="arr">→</span>
+      <div class="node hot"><b>turn 结束，等工具</b><small>这段 KV 缓存还留在池里吗</small></div><span class="arr">→</span>
+      <div class="node"><b>下一个 turn 到达</b><small>缓存还在就只算新增部分</small></div>
+    </div>
+    <p>资源的紧张点在 KV 池。它的容量固定，正在等工具的 program 也占着空间；新 turn 放不下时，引擎的内存管理器必须回收（evict）一些缓存腾地方。被回收的 program 回来时要重新 prefill 整段上下文。这条路径上有三处可以有不同做法，也就是本文说的三类策略：</p>
+    <div class="tbl"><table>
+      <thead><tr><th>决定</th><th class="wrap">管理的对象和机制</th><th class="wrap">决定的影响</th><th>论文术语</th></tr></thead>
+      <tbody>
+        <tr><td>派到哪个实例</td><td class="wrap">多个服务实例之间的分配。每个实例的 KV 池是独立的。</td><td class="wrap">回到上次的实例才能复用缓存，但那台可能已经很忙</td><td>routing</td></tr>
+        <tr><td>队列里谁先执行</td><td class="wrap">实例内的等待队列。组批调度器按优先级挑选 turn 进入批次。</td><td class="wrap">决定谁等多久，而等待时间会推迟它的下一个 turn</td><td>scheduling</td></tr>
+        <tr><td>KV 池满时回收谁</td><td class="wrap">KV 池中已完成 turn 留下的缓存。内存管理器按某种顺序回收。</td><td class="wrap">留对了省下重算，留错了白占显存、挤掉别人</td><td>retention</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">问题</span><h2>智能体负载为什么让这些决定变难</h2><span class="src">§1、附录 A</span></div>
+    <div class="lane"><span class="lab">占调用次数</span><div class="stack"><span class="s-a" style="width:4%"></span><span class="s-c" style="width:96%">超过 1 分钟的调用：4%</span></div></div>
+    <div class="lane"><span class="lab">占工具总耗时</span><div class="stack"><span class="s-a" style="width:85%">超过 1 分钟的调用：85%</span><span class="s-c" style="width:15%"></span></div></div>
+    <div class="lane"><span class="lab">前缀缓存命中</span><div class="stack"><span class="s-a" style="width:95.7%">95.7%</span><span class="s-c" style="width:4.3%"></span></div></div>
+    <p>这三条数据来自两个编程智能体的生产环境记录。工具耗时极不均匀：超过一分钟的调用只占 4%，却占了 85% 的工具耗时[[heavy-tail]]。相邻 turn 高度重合，前缀缓存命中率 95.7%[[hit-rate]]。合起来看，留住 KV 缓存的收益很大，但代价不均匀：短间隙里留着几乎不花成本，长间隙里留着就是白占显存。固定的保护期很难兼顾两种情况。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>本文的负载</th><th class="r">program 数</th><th class="r">每个 program 的 turn 数<small>平均 / 中位 / 最多</small></th><th class="r">每个 turn 的上下文 token<small>平均 / 中位</small></th><th class="r">tool gap，秒<small>平均 / 中位 / p99</small></th></tr></thead>
+      <tbody>
+        <tr><td>SWE-bench</td><td class="r">50</td><td class="r">57.5 / 47 / 185</td><td class="r">13,463 / 11,115</td><td class="r">1.09 / 0.20 / 18.6</td></tr>
+        <tr><td>BFCL v4</td><td class="r">100</td><td class="r">7.0 / 5.5 / 21</td><td class="r">6,603 / 3,448</td><td class="r">1.39 / 1.06 / 5.7</td></tr>
+      </tbody>
+    </table></div>
+    <p>SWE-bench 是修代码的长任务，一次决定会影响之后几十个 turn[[47-turns]]。BFCL 是函数调用的短任务，用来检验另一种负载形态下是否同样准确。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">问题</span><h2>请求级模拟器为什么不够</h2><span class="src">§1、§2</span></div>
+    <div class="pair">
+      <div><h3>请求级模拟</h3><p>每个 request 的到达时间从记录里读出。request 结束时，KV 缓存立即释放，或按固定规则当普通缓存。</p></div>
+      <div class="hot"><h3>program 级模拟</h3><p>下一个 turn 的到达时间由模拟算出。KV 缓存归 program 所有，去留由策略决定。</p></div>
+    </div>
+    <p>差别在到达时间。下面的例子说明为什么不能照抄录下的时间戳（数字是示意）。一个 turn 执行 2 秒，之后工具运行 5 秒：</p>
+    <div class="tbl"><table>
+      <thead><tr><th>策略</th><th class="r">排队等待</th><th class="r">完成时刻</th><th class="r">下一个 turn 到达时刻</th></tr></thead>
+      <tbody>
+        <tr><td>录制轨迹时用的策略 A</td><td class="r">1 s</td><td class="r">3 s</td><td class="r">8 s</td></tr>
+        <tr><td>想评估的策略 B</td><td class="r">10 s</td><td class="r">12 s</td><td class="r">17 s</td></tr>
+      </tbody>
+    </table></div>
+    <p>策略 B 下，下一个 turn 应该在第 17 秒到达，这又改变了那一刻的队列和 KV 池状态。如果按录下的第 8 秒重放，策略本该改变的东西就被固定死了，测不出换一种策略会怎样[[replay-fixed]]。KV 缓存也有类似问题：请求级模拟器在 request 结束时就决定了缓存的命运，而对智能体来说，tool gap 本身就是要做决定的时刻[[gap-decision]]。最接近的 Frontier 已经能按完成时间释放下一个 request，但把它固定派到上一个所在的实例，缓存保留也交给引擎自带的前缀缓存[[frontier]]，这两处都不能替换成别的策略。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>架构：在原模拟器上加一层 program 层</h2><span class="fn">Figure 1</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentservesim/fig1.png" alt="AgentServeSim 架构图" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>下方大框是 <a class="plink ls-t" href="#llmservingsim">LLMServingSim 2.0</a> 原来就有的部分：服务实例里的设备、性能模型、KV 缓存管理器、组批调度器和执行图生成器，由 ASTRA-sim 算出计算、通信和访存的耗时。它们模拟的是引擎机制。</p>
+        <p>上方是新增部分。Program Orchestrator 为每个 program 维护一个控制块（PCB），一个 turn 准备好时交给左边的 Dispatch Plane，决定派到哪个实例、优先级多少；完成时交给右边的 Retention Plane，决定缓存的价值和保护时间。这个结构借用了操作系统对进程的处理方式：一个 turn 相当于一段计算，工具调用相当于阻塞的系统调用，KV 缓存相当于跨越多次调度一直需要的工作集[[os-analogy]]。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>§3 的三个定义：模拟器为什么需要它们</h2>
+    <p>模拟器要回答的问题是“换一种策略，JCT 会怎样变”。这要求它做到三件事：算出下一个 turn 何时到达，让策略能看到跨 turn 的历史，并规定策略能决定什么。下面三个面板一一对应。</p>
+  </div>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">定义</span><h2>到达时间由模拟算出</h2><span class="src">式 (2)</span></div>
+    <div class="formula">下一个 turn 的到达时刻 = 这个 turn 的完成时刻 + 这个 turn 之后的工具耗时</div>
+    <p>工具耗时、token 数这些属于任务本身的内容从记录里读取，所有策略相同。完成时刻包含排队和执行，随策略变化。两者相加，就把前面例子里的 8 秒和 17 秒都算对了。这个公式就是 program 层的动力来源，到达时间不再是输入，而是运行结果。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">定义</span><h2>控制块记录策略要用的历史</h2><span class="src">§3.2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>PCB 记录</th><th class="wrap">谁需要它</th></tr></thead>
+      <tbody>
+        <tr><td>累计被服务时间</td><td class="wrap">PLAS 排队</td></tr>
+        <tr><td>上次所在实例</td><td class="wrap">会话亲和路由</td></tr>
+        <tr><td>KV 是否还在、是否受保护</td><td class="wrap">回收和排队决定</td></tr>
+        <tr><td>正在等哪个工具</td><td class="wrap">按工具设置保护期</td></tr>
+      </tbody>
+    </table></div>
+    <p>单个 request 结束后状态就没了，这些跨 turn 的信息需要一个地方存放。记录里还存着未来的信息，比如下一轮输出多少 token、工具要跑多久，这些在发生之前不进入 PCB[[causal-boundary]]，因此模拟器里表现好的策略不会依赖部署时拿不到的信息。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">定义</span><h2>策略只回答两个问题</h2><span class="src">式 (1)</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>时机</th><th>策略</th><th class="wrap">返回</th></tr></thead>
+      <tbody>
+        <tr><td>turn 到达</td><td>π<sub>dispatch</sub></td><td class="wrap">派到哪个实例，优先级多少</td></tr>
+        <tr><td>turn 完成</td><td>π<sub>retain</sub></td><td class="wrap">缓存的价值，保护到什么时候</td></tr>
+      </tbody>
+    </table></div>
+    <p>两个函数的输入都是这个 program 的 PCB 和当前系统状态（各实例负载、KV 池占用率）。策略只说要什么，组批、抢占、回收内存、何时执行仍由引擎机制完成[[declarative]]。有了这条分界，换策略时不用改引擎模型，模拟和实测才能运行相同的决策逻辑。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>三处机制上各有哪些策略</h2><span class="src">§3.3、§3.4、附录 E</span></div>
+    <div class="figrow">
+      <div class="fb">
+        <h3>实例选择（routing）</h3>
+        <p>机制：turn 必须落到某个实例；缓存只在这个实例的 KV 池里。</p>
+        <div class="tbl"><table><tbody>
+          <tr><td>round-robin</td><td class="wrap">依次分配</td></tr>
+          <tr><td>least-loaded</td><td class="wrap">选负载最低的实例</td></tr>
+          <tr><td>session affinity</td><td class="wrap">回到上次的实例，过载时才换</td></tr>
+        </tbody></table></div>
+      </div>
+      <div class="fb">
+        <h3>队列排序（scheduling）</h3>
+        <p>机制：实例内优先级数值小的 turn 先进入批次，数值相同时先到先执行。策略的差别在优先级取什么。</p>
+        <div class="tbl"><table><tbody>
+          <tr><td>FCFS</td><td class="wrap">这个 turn 的到达时刻</td></tr>
+          <tr><td>Program-FCFS</td><td class="wrap">它所属 program 的到达时刻，早到的 program 一路优先</td></tr>
+          <tr><td>PLAS</td><td class="wrap">program 累计被服务的时间，服务得少的优先，短任务不会被长任务堵住</td></tr>
+        </tbody></table></div>
+      </div>
+      <div class="fb">
+        <h3>缓存回收（retention）</h3>
+        <p>机制：KV 池不够时，先回收过了保护期的缓存，再回收价值低的。策略的差别在保护期和价值怎么设。</p>
+        <div class="tbl"><table><tbody>
+          <tr><td>立即释放</td><td class="wrap">不留，等同请求级模拟</td></tr>
+          <tr><td>固定 TTL</td><td class="wrap">一律保护 τ 秒（取 2 秒），假设间隙都差不多长</td></tr>
+          <tr><td>按工具 TTL</td><td class="wrap">取该工具历史间隙的 90 分位数</td></tr>
+          <tr><td>随压力调整 TTL</td><td class="wrap">KV 池占用从 70% 升到 90%，保护期从 τ 缩到 τ/2</td></tr>
+          <tr><td>LRU</td><td class="wrap">价值按最后访问时间，先回收最久未用的</td></tr>
+          <tr><td>min-waste</td><td class="wrap">比较留着占用的显存时间和丢掉后的重算代价，决定留或不留</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+    <p>回收规则还有一点值得注意：保护只是偏好[[preference]]。所有缓存都在保护期内时，价值最低的照样被回收，避免保护过多导致新 turn 无处安放。这样缓存能活多久成了可以编程的结果，而显存容量这条硬约束仍由内存管理器保证[[retention-summary]]。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>模拟器和 vLLM“共用接口”是什么意思</h2><span class="src">§4、§5.3、附录 E、Listing 3</span></div>
+    <div class="figgrid">
+      <pre class="code"><b>class</b> EvolvedScheduling(SchedulingPolicy):
+    engine_args = {"scheduling_policy": "priority"}
+
+    <b>def</b> priority(self, pcb, now):
+        <b># PLAS：累计服务时间越少，数值越小，越先执行</b>
+        <b>return</b> int(round(pcb.attained_service_s * 1000.0))</pre>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>指实际的策略实现相同，语法结构相似还不足以描述它。一个策略是一个 Python 类，模拟器和 vLLM 执行相同的类[[same-impl]]，vLLM 一侧通过一层很薄的适配器接入。左边是论文给出的 PLAS 代码。</p>
+      </div>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>策略类型</th><th>策略需要实现的方法</th><th>返回</th></tr></thead>
+      <tbody>
+        <tr><td>scheduling</td><td><code>priority(pcb, now)</code></td><td class="wrap">一个整数，小的先执行，和 vLLM 的优先级语义一致[[small-first]]</td></tr>
+        <tr><td>retention</td><td><code>on_turn_complete(pcb, now)</code>、<code>on_turn_arrival(pcb, now)</code></td><td class="wrap">protect(until)、release、evict 或 none</td></tr>
+        <tr><td>routing</td><td><code>select(pcb, inflight, now)</code></td><td class="wrap">实例编号</td></tr>
+      </tbody>
+    </table></div>
+    <p>这些方法是 AgentServeSim 定义的策略接口，不是 vLLM 原生的 API，适配器负责把它接到 vLLM 上，论文没有详细描述适配器的内容。这样设计的好处有两点：比较模拟和实测时两边的决策来自相同的代码，误差才能归因于模拟器的时间模型；在模拟器里搜到的策略可以不改动地放到 vLLM 上运行[[unchanged]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验的整体逻辑</h2>
+    <p>全部实验分三步，目的不同，不要混在一起看。先证明模拟器算得准，再用它比较策略，最后用它自动搜索策略。</p>
+  </div>
+
+  <section class="panel">
+    <div class="tbl"><table>
+      <thead><tr><th>实验</th><th class="wrap">要回答的问题</th><th class="wrap">固定什么</th><th class="wrap">改变什么</th><th class="wrap">看什么指标</th><th>在哪里跑</th></tr></thead>
+      <tbody>
+        <tr><td>保真度验证</td><td class="wrap">模拟出的时间和真机对得上吗？</td><td class="wrap">策略（固定 TTL 加 PLAS）</td><td class="wrap">GPU、模型、负载、到达速率，共 20 组</td><td class="wrap">模拟相对真机的 JCT 误差</td><td>模拟器和真机都跑</td></tr>
+        <tr><td>策略扫描</td><td class="wrap">哪种保留和排队的组合更好？</td><td class="wrap">硬件、模型、负载、速率</td><td class="wrap">保留策略、排队策略</td><td class="wrap">平均 JCT 相对基线的变化</td><td>只在模拟器</td></tr>
+        <tr><td>策略搜索</td><td class="wrap">大模型能否写出比人更好的策略？</td><td class="wrap">硬件、模型、负载、速率</td><td class="wrap">策略代码本身</td><td class="wrap">平均 JCT 相对种子策略的降幅</td><td>只在模拟器</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="band">
+    <h2>保真度验证：模拟器和真机对得上吗</h2>
+    <p>这组实验只评价模拟器，不评价策略好坏。TTL 加 PLAS 只是一种设置，选它是因为这时模拟器自己的决定会影响后续，比引擎默认设置下更难算准。</p>
+  </div>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">验证</span><h2>怎样让两边可以比较</h2><span class="src">§4</span></div>
+    <p>相同的输入分别交给模拟器和真实的 vLLM 0.19：相同的 prompt、输出长度和工具耗时，相同的 program 到达时刻[[replay-same]]。排队顺序、缓存是否还在、下一个 turn 何时到达由两边各自算出。两边的差异就只来自服务系统的行为，智能体输出的随机性被排除。</p>
+    <p>模拟器的硬件参数按真机设置，这是它算得准的基础：先用 profiler 在每种 GPU 和模型组合上实际测出每个算子的耗时，多卡通信用实测带宽，KV 池大小用 vLLM 自己报告的数值。</p>
+    <dl class="defs">
+      <dt>GPU 和模型</dt><dd>B200（180 GB 显存，8B 用 1 卡、70B 用 2 卡）；RTX PRO 6000（96 GB 显存，70B 用 2 卡，显存紧张）</dd>
+      <dt>到达速率</dt><dd>每秒新到达几个 program（JPS）。五档从 0.02 到 0.10，即平均 50 秒到 10 秒来一个，用来改变系统负载。</dd>
+    </dl>
+    <p>每组只有一个服务实例，所以验证覆盖了保留和排队，没有覆盖 routing[[single-instance]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><h2>模拟的平均 JCT 相对实测的误差</h2><span class="fn">Figure 2</span><span class="src">附录 B</span></div>
+    <div class="dbars" data-lin="-6,6" style="--lw:96px">
+      <div class="grp">B200，8B，SWE-bench</div>
+      <div class="row"><span class="name">0.02 JPS</span><div class="plot"><span class="dbar" data-v="-1.4"><i>−1.4%</i></span></div></div>
+      <div class="row"><span class="name">0.04</span><div class="plot"><span class="dbar" data-v="-1.3"><i>−1.3%</i></span></div></div>
+      <div class="row"><span class="name">0.06</span><div class="plot"><span class="dbar" data-v="-1.6"><i>−1.6%</i></span></div></div>
+      <div class="row"><span class="name">0.08</span><div class="plot"><span class="dbar" data-v="-0.8"><i>−0.8%</i></span></div></div>
+      <div class="row"><span class="name">0.10</span><div class="plot"><span class="dbar" data-v="-0.5"><i>−0.5%</i></span></div></div>
+      <div class="grp">B200，8B，BFCL</div>
+      <div class="row"><span class="name">0.02 JPS</span><div class="plot"><span class="dbar" data-v="-5.5"><i>−5.5%</i></span></div></div>
+      <div class="row"><span class="name">0.04</span><div class="plot"><span class="dbar" data-v="-2.7"><i>−2.7%</i></span></div></div>
+      <div class="row"><span class="name">0.06</span><div class="plot"><span class="dbar" data-v="-2.6"><i>−2.6%</i></span></div></div>
+      <div class="row"><span class="name">0.08</span><div class="plot"><span class="dbar" data-v="-2.7"><i>−2.7%</i></span></div></div>
+      <div class="row"><span class="name">0.10</span><div class="plot"><span class="dbar" data-v="-2.5"><i>−2.5%</i></span></div></div>
+      <div class="grp">B200，70B，SWE-bench</div>
+      <div class="row"><span class="name">0.02 JPS</span><div class="plot"><span class="dbar" data-v="-1.0"><i>−1.0%</i></span></div></div>
+      <div class="row"><span class="name">0.04</span><div class="plot"><span class="dbar" data-v="-0.2"><i>−0.2%</i></span></div></div>
+      <div class="row"><span class="name">0.06</span><div class="plot"><span class="dbar" data-v="-2.2"><i>−2.2%</i></span></div></div>
+      <div class="row"><span class="name">0.08</span><div class="plot"><span class="dbar" data-v="-3.5"><i>−3.5%</i></span></div></div>
+      <div class="row"><span class="name">0.10</span><div class="plot"><span class="dbar" data-v="-2.7"><i>−2.7%</i></span></div></div>
+      <div class="grp">RTX PRO 6000，70B，SWE-bench（显存紧张）</div>
+      <div class="row"><span class="name">0.02 JPS</span><div class="plot"><span class="dbar" data-v="3.4"><i>+3.4%</i></span></div></div>
+      <div class="row"><span class="name">0.04</span><div class="plot"><span class="dbar" data-v="1.7"><i>+1.7%</i></span></div></div>
+      <div class="row"><span class="name">0.06</span><div class="plot"><span class="dbar" data-v="4.5"><i>+4.5%</i></span></div></div>
+      <div class="row"><span class="name">0.08</span><div class="plot"><span class="dbar" data-v="3.4"><i>+3.4%</i></span></div></div>
+      <div class="row"><span class="name">0.10</span><div class="plot"><span class="dbar" data-v="-5.2"><i>−5.2%</i></span></div></div>
+      <div class="row"><span></span><div class="ticks"><span data-t="-6">−6%</span><span data-t="-3">−3%</span><span data-t="0">0</span><span data-t="3">+3%</span><span data-t="6">+6%</span></div></div>
+    </div>
+    <p>这是模拟值减实测值再除以实测值。结论是模拟器和真机对得上：20 组误差都在 6% 以内。模拟器自己的排队和保留决定会影响后面每个 turn，误差本有可能在几十个 turn 里越滚越大，结果显示它没有滚起来。</p>
+    <p>两处值得说明。BFCL 最低速率的误差最大，这些 program 只运行约 11 秒，真实引擎空闲后第一次接到调用要多花约 60 毫秒唤醒，模拟器没有模拟这一点[[wakeup]]；速率升高后引擎不再空闲，误差降到 2.5%。RTX PRO 6000 是最严苛的一组：KV 池只有 114,768 token，放不下 9 个平均长度的上下文，所有 program 跑完用了到达时间跨度的五倍[[rtx-regime]]，系统长期严重排队，误差仍在 −5.2% 到 +4.5% 之间。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>最慢的 program 和单个 program 算得准吗</h2><span class="fn">Figure 3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentservesim/fig3.png" alt="p99 JCT 误差与逐程序 MAPE" loading="lazy"></button>
+    </figure>
+    <p>平均值可能掩盖问题，所以再看两个指标，横轴都是到达速率。上面四张图是 p99 JCT 误差，看最慢那 1% 的 program：B200 上在 2.7% 以内，RTX 上最高 7.1%。下面四张图是 MAPE，每个 program 单独算误差的绝对值，再取平均：B200 上不超过 5.9%，RTX 上在 7% 到 11.2% 之间。</p>
+    <p>两组数字放在一起看，拥堵时单个 program 的完成时间更难算准，它取决于在长队列里和谁挨着、缓存恰好被谁挤掉；这些偏差有正有负，平均后相互抵消，所以平均 JCT 仍然准。用这个模拟器比较策略时，比较平均值是可靠的，比较个别 program 要把 10% 左右的误差考虑进去。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>更细的时间尺度上对得上吗</h2><span class="fn">Figure 5</span><span class="src">附录 C、D</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentservesim/fig5.png" alt="真实 vLLM 与模拟器的瞬时吞吐" loading="lazy"></button>
+    </figure>
+    <p>JCT 对得上可能只是总量凑巧，这张图检验过程是否也一致。横轴是从第一个 program 到达起的时间，纵轴是每 10 秒内每秒生成的 token 数。两条线的相关系数 0.98，并在约 1100 秒处同时结束。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>指标</th><th class="r">实测</th><th class="r">模拟</th></tr></thead>
+      <tbody>
+        <tr><td>TTFT，第一个 token 的等待时间</td><td class="r">17.52 ms</td><td class="r">18.32 ms</td></tr>
+        <tr><td>TPOT，每生成一个 token 的时间</td><td class="r">4.42 ms</td><td class="r">4.35 ms</td></tr>
+        <tr><td>平均延迟，单轮聊天 ShareGPT</td><td class="r">3.17 s</td><td class="r">3.26 s</td></tr>
+      </tbody>
+    </table></div>
+    <p>前两行来自相同的 SWE-bench 设置，差约 0.8 毫秒，这个偏差不随负载增长，对 JCT 的影响只有 0.3%[[ttft]]。第三行换成每个 program 只有一个 turn 的聊天负载，program 层不起作用，误差 2.8%，说明加上 program 层没有破坏原模拟器对普通 request 的准确度。</p>
+  </section>
+
+  <div class="band">
+    <h2>策略扫描：哪种组合更好</h2>
+    <p>模拟器验证过后，用它比较策略。这组结果只在模拟器中得到，没有在真机上逐一复现。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">结果</span><h2>保留和排队怎样组合 JCT 最低</h2><span class="fn">Table 1</span></div>
+    <div class="figgrid">
+      <div class="dbars" data-lin="-6,2" style="--lw:190px">
+        <div class="row"><span class="name">固定 TTL，FCFS</span><div class="plot"><span class="dbar" data-v="0.4"><i>+0.4%</i></span></div></div>
+        <div class="row"><span class="name">随压力调整 TTL，FCFS</span><div class="plot"><span class="dbar" data-v="0.4"><i>+0.4%</i></span></div></div>
+        <div class="row"><span class="name">按工具 TTL，Program-FCFS</span><div class="plot"><span class="dbar" data-v="-2.8"><i>−2.8%</i></span></div></div>
+        <div class="row"><span class="name">固定 TTL，PLAS</span><div class="plot"><span class="dbar" data-v="-3.0"><i>−3.0%</i></span></div></div>
+        <div class="row"><span class="name">LRU，PLAS</span><div class="plot"><span class="dbar" data-v="-3.9"><i>−3.9%</i></span></div></div>
+        <div class="row"><span class="name"><b>随压力调整 TTL，PLAS</b></span><div class="plot"><span class="dbar" data-v="-5.0"><i>−5.0%</i></span></div></div>
+        <div class="row"><span></span><div class="ticks"><span data-t="-6">−6%</span><span data-t="-4">−4%</span><span data-t="-2">−2%</span><span data-t="0">0</span><span data-t="2">+2%</span></div></div>
+      </div>
+      <p>实验放在最能体现差异的显存紧张场景：RTX PRO 6000、70B、50 个 SWE-bench program、0.02 JPS。指标是平均 JCT 相对基线（LRU 加 FCFS，3726 秒）的变化，负值表示更快。结果是只换保留策略、排队仍用 FCFS 时，JCT 没有改善；换成 PLAS 才有明显改善；随压力调整 TTL 配 PLAS 最好，降低 5%。</p>
+    </div>
+    <p>两者的分工可以解释这一点：排队决定哪些 program 要等，保留决定它们回来时缓存还在不在[[who-waits]]。本页的推测是，FCFS 下 turn 回来后要排在大量 request 后面，等轮到它时被保护的缓存往往已经过期，保护白占了显存；PLAS 改变执行顺序后，被保护的缓存才更有机会用上。另一个结果是固定 TTL 配 PLAS 反而比 LRU 配 PLAS 差 0.9 个百分点，它对所有缓存一视同仁地保护，挤掉了 PLAS 接下来要用的 program 的缓存[[fixed-ttl]]。所以保留策略不能单独评价，要看它和调度是否配合。</p>
+  </section>
+
+  <div class="band">
+    <h2>策略搜索：让大模型改写策略代码</h2>
+    <p>策略组合有限，能否让大模型写出新策略？模拟器每评估一个候选只需 CPU，这才使大量试错可行。</p>
+  </div>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><h2>搜到的策略比人写的好多少</h2><span class="fn">Table 2</span><span class="src">§5.3、附录 F</span></div>
+    <div class="bars" data-lin="0,3" style="--lw:120px">
+      <div class="legend"><span class="muted">平均 JCT 相对种子策略的降幅（%）</span></div>
+      <div class="row"><span class="name">保留，从固定 TTL</span><div class="track"><div class="bar a tall" data-v="0.5"><i>0.5</i></div></div></div>
+      <div class="row"><span class="name">排队，从 PLAS</span><div class="track"><div class="bar a tall" data-v="2.8"><i>2.8</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="1">1</span><span data-t="2">2</span><span data-t="3">3</span></div></div>
+    </div>
+    <p>做法：OpenEvolve 管理一批候选策略，大模型（Qwen3.7-plus 和 Claude Sonnet 5）修改它们的 Python 代码，AgentServeSim 跑完负载给出平均 JCT，分数指导下一轮修改，每个方向 50 轮。评估设置是 RTX PRO 6000、70B、30 个 SWE-bench program、0.1 JPS，每次评估用一个 CPU 核约 19 分钟。候选可以引入新公式，但必须遵守接口和“不能看未来”的规则[[evolve-code]]。</p>
+    <p>结果是保留方向从 2534.3 秒降到 2522.7 秒，排队方向从 2619.4 秒降到 2545.8 秒。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><h2>搜到的策略长什么样</h2><span class="src">式 (7)、式 (8)</span></div>
+    <h3 class="sub">保留策略</h3>
+    <div class="formula">保护截止 = 完成时间 + max(0.5, 上下文长度 ÷ 20000) × 该工具的平均间隙 × max(0.3, 1 − KV 池占用率)</div>
+    <p>上下文越长保护越久，因为丢掉后重算更贵；KV 池越满保护越短。它只带来 0.5% 的改善，因为在这个设置下保护期很少真正决定回收哪块缓存，48 个候选里有 40 个彼此相差不到 0.5%[[plateau]]。</p>
+    <h3 class="sub">排队策略（数值小者先执行）</h3>
+    <div class="formula">优先级 = 1000 × √(累计被服务秒数) + 0.03 × 上下文长度 − 0.10 × 上下文长度 × (缓存仍在 ? 1 : 0)</div>
+    <p>三项分别让已运行很久的 program 不至于被压得太靠后、让重算便宜的短上下文优先、让缓存还在的优先[[sched-terms]]。后两项在第一代就出现了，贡献了大部分收益。这条规则换到 0.02 JPS 下仍降低 2.3%。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>AgentServeSim 把模拟的单位从 request 换成了 program，下一个 turn 何时到达、缓存在不在，都是模拟执行的结果，不再照抄录下的数据[[conclusion]]。它把 KV 回收、队列排序和实例选择做成可替换的策略，和 vLLM 执行相同的策略代码。20 组对照中平均 JCT 误差不超过 5.5%。</p>
+    <p>模拟器把评估一个策略的成本从数小时的双卡 GPU 时间降到约一个 CPU 核时，使系统地比较策略、让大模型自动搜索策略成为可能。比较的结果说明排队对 JCT 的影响大于保留，两者必须配合设计。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>验证只用了一个服务实例，routing 尚未与真实系统对照；模型只有 Llama-3.1 的两个规模，负载两类，策略组合只验证了固定 TTL 加 PLAS 一种。换成混合专家模型、更长的上下文或 prefill 与 decode 分开部署的架构，准确度需要重新确认。演化出的策略针对特定的负载和硬件，本来就不追求通用[[deployment-specific]]。</p>
+    <p>策略扫描和搜索的结果都只来自模拟器，收益（0.5%、2.8%、5%）和拥堵时单个 program 7% 到 11% 的模拟误差在量级上接近，更适合看作模拟器能充当搜索评分器的可行性演示。长期价值更大的是那层接口，它让 InferCept、Continuum、Autellix 等系统中分散的策略可以放在一起组合比较。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="jct-depends"><blockquote lang="en">Their job completion time depends on how the serving system retains KV state across tool gaps, routes successor turns, and schedules competing programs.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="request-level"><blockquote lang="en">Most existing serving simulators operate on request streams in which arrivals are externally supplied and KV state follows request- or cache-scoped semantics.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="heavy-tail"><blockquote lang="en">First, tool calls introduce gaps with a heavy-tailed duration distribution: in production traces of two coding agents, calls longer than one minute constitute only 4% of tool calls but account for 85% of total tool time [Zhu et al., 2026].</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="hit-rate"><blockquote lang="en">the same traces report a global prefix-cache hit rate of 95.7% [Zhu et al., 2026].</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="47-turns"><blockquote lang="en">programs in our SWE-Bench traces contain a median of 47 turns (§A).</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="policies"><blockquote lang="en">Serving systems have introduced policies specialized for these decisions, including KV retention across tool gaps [Abhyankar et al., 2024, Li et al., 2026], session-aware routing [Wang et al., 2026], and program-aware scheduling [Luo et al., 2025].</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="gpu-hours"><blockquote lang="en">Sweeping deployment configurations for a single model has been estimated to require 42K GPU-hours [Agrawal et al., 2024], while agent serving adds interacting retention, routing, and scheduling dimensions.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="gap-decision"><blockquote lang="en">In an agent-serving system, however, the tool gap is itself a policy decision point.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="replay-fixed"><blockquote lang="en">Replaying its turns at recorded timestamps fixes the release schedule and cache state that a different policy is supposed to change; the counterfactual serving trajectory must instead be generated causally.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="os-analogy"><blockquote lang="en">Inspired by an operating system process, it represents an LLM turn as a compute burst, a tool call as a blocking system call, and the program’s KV cache as a working set that persists across turns.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="frontier"><blockquote lang="en">Frontier [Feng et al., 2026] is closest: it models stateful request chains and releases successors causally, capturing time coupling, but pins each successor to its predecessor’s replica and leaves retention to the engine’s native prefix cache.</blockquote><p class="loc">第 2 节，第 3 页</p></li>
+      <li data-key="declarative"><blockquote lang="en">Policies return only these declarative decisions; batching, preemption, memory reclamation, and execution timing remain engine mechanisms.</blockquote><p class="loc">第 3.1 节，第 4 页</p></li>
+      <li data-key="causal-boundary"><blockquote lang="en">The PCB also defines a causal observation boundary: future output lengths and tool durations stored in the trace are excluded</blockquote><p class="loc">第 3.2 节，第 4 页</p></li>
+      <li data-key="preference"><blockquote lang="en">Protection remains a preference rather than a lock: if all entries are protected, the least-valued protected entry becomes the victim.</blockquote><p class="loc">第 3.4 节，第 5 页</p></li>
+      <li data-key="retention-summary"><blockquote lang="en">The Retention Plane therefore turns cross-turn KV lifetime into a programmable policy outcome while leaving capacity enforcement to the memory manager.</blockquote><p class="loc">第 3.4 节，第 5 页</p></li>
+      <li data-key="replay-same"><blockquote lang="en">For each call we replay the captured prompt, generated-token count, and tool duration on both the real and the simulated side, so JCT differences reflect serving-system behavior rather than agent-side nondeterminism</blockquote><p class="loc">第 4 节，第 6 页</p></li>
+      <li data-key="single-instance"><blockquote lang="en">Each cell uses a single serving instance, so the validation exercises retention and scheduling but not routing.</blockquote><p class="loc">第 4 节，第 6 页</p></li>
+      <li data-key="wakeup"><blockquote lang="en">these programs last about 11 s, and the real engine pays a wake-up of roughly 60 ms on the first call after an idle gap, which the simulator does not model.</blockquote><p class="loc">第 5.1 节，第 7 页</p></li>
+      <li data-key="rtx-regime"><blockquote lang="en">Llama-3.1-70B at TP2 leaves a 114,768-token KV pool for a workload containing 38.7M context tokens, and the resulting makespan is five times the arrival span.</blockquote><p class="loc">第 5.1 节，第 7 页</p></li>
+      <li data-key="ttft"><blockquote lang="en">The TTFT offset of about 0.8 ms is the mean wait for the in-flight decode step, which the simulator charges to every arriving call; it does not grow with load and contributes 0.3% to JCT.</blockquote><p class="loc">附录 D，第 10 页</p></li>
+      <li data-key="fixed-ttl"><blockquote lang="en">Fixed TTL weakens the PLAS improvement by 0.9 percentage points, consistent with indiscriminate protection displacing KV state belonging to programs that PLAS will run next.</blockquote><p class="loc">第 5.2 节，第 7 页</p></li>
+      <li data-key="who-waits"><blockquote lang="en">These results show that scheduling determines which programs wait, while retention determines whether their KV state remains available when they resume.</blockquote><p class="loc">第 5.2 节，第 7 页</p></li>
+      <li data-key="cost"><blockquote lang="en">Each simulated point costs approximately one CPU-core-hour, whereas the corresponding vLLM evaluation occupies two GPUs for three to six hours.</blockquote><p class="loc">第 5.2 节，第 7 页</p></li>
+      <li data-key="evolve-code"><blockquote lang="en">Unlike parameter tuning over a predefined policy family, the search evolves the policy implementation itself while preserving the interface and causal observation boundary of Section 3.</blockquote><p class="loc">第 5.3 节，第 7 页</p></li>
+      <li data-key="sched-terms"><blockquote lang="en">The concave service term limits the penalty on programs that have already consumed substantial service, the context-length term favors calls requiring less prefill computation and KV capacity, and the residency term favors calls whose contexts remain cached.</blockquote><p class="loc">第 5.3 节，第 8 页</p></li>
+      <li data-key="plateau"><blockquote lang="en">The retention search evaluated 48 candidates, of which 40 land within 0.5% of one another, since on the target cell the deadline rarely decides which entry is reclaimed.</blockquote><p class="loc">附录 F，第 12 页</p></li>
+      <li data-key="conclusion"><blockquote lang="en">We presented AgentServeSim, a program-level simulator for agent serving in which successor arrivals and KV residency are outcomes of simulated execution rather than fixed trace inputs.</blockquote><p class="loc">第 6 节，第 8 页</p></li>
+      <li data-key="deployment-specific"><blockquote lang="en">These policies are deployment-specific by design: the objective is to optimize serving decisions for a target workload and hardware configuration, rather than to learn one policy that generalizes across deployments.</blockquote><p class="loc">第 5.3 节，第 8 页</p></li>
+      <li data-key="same-impl"><blockquote lang="en">The same policy implementations execute in vLLM [Kwon et al., 2023] through a thin adapter.</blockquote><p class="loc">第 4 节，第 5 页</p></li>
+      <li data-key="small-first"><blockquote lang="en">a scheduling policy implements priority(pcb, now) returning an integer (smaller runs first, matching vLLM)</blockquote><p class="loc">附录 E，第 11 页</p></li>
+      <li data-key="unchanged"><blockquote lang="en">Thus, an evolved policy uses only information available in deployment and executes unchanged in vLLM.</blockquote><p class="loc">第 5.3 节，第 7 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

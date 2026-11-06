@@ -1,0 +1,282 @@
+<article class="view frame paper" id="view-cost-of-reasoning" data-paper="cost-of-reasoning" hidden>
+
+<header class="masthead">
+  <h1 lang="en">The Cost of Dynamic Reasoning: Demystifying AI Agents and Test-Time Scaling from an AI Infrastructure Perspective</h1>
+  <p class="zh">动态推理的代价：从 AI 基础设施的角度看智能体和测试时扩展</p>
+  <p class="by">Jiin Kim、Byeongjun Shin、Jinha Chung、Minsoo Rhu，KAIST</p>
+  <div class="meta">
+    <span class="venue">arXiv 2506.04301v2，cs.LG，2026</span>
+    <div class="crumb"><span>计算机体系结构</span><span>AI 基础设施</span><span>负载刻画</span><span>智能体与测试时扩展</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>从静态推理到动态推理</h2><span class="fn">Fig. 1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cost/fig1.png" alt="三类推理方式" loading="lazy"></button>
+    </figure>
+    <p>三行是三种使用大模型的方式。(a) 普通用法，输入直接变成输出。(b) 静态推理，模型先在内部写出推理步骤再作答。(c) 动态推理，问“巴黎到纽约最便宜的航班”，模型想到需要查航班，调用搜索工具，读到结果，据此继续推理，直到给出答案。</p>
+    <p>近年提升大模型能力的重点，从扩大模型和数据转向在推理时多花计算，这叫测试时扩展：参数不变，回答问题时投入更多计算来换效果[[tts]]。这篇论文测 (c) 这类负载对硬件和基础设施意味着什么。它属于“负载刻画”研究：不提出新系统，而是把一类新负载的资源特征测清楚，为后续设计提供依据[[first]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2><span class="fn">Fig. 2</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/cost/fig2.png" alt="AI 智能体结构" loading="lazy"></button>
+      </figure>
+      <dl class="defs">
+        <dt>request</dt><dd>交给智能体的一个完整任务，论文也称 query。一个 request 对应从 benchmark 里取出的一道题，比如一个 HotpotQA 问题，从提交到给出最终答案算一个 request。</dd>
+        <dt>LLM call</dt><dd>对大模型的一次推理调用。一个 request 内部有多次 LLM call，论文有时也称其为 LLM request。</dd>
+        <dt>QPS</dt><dd>每秒送入的 request 数。</dd>
+        <dt>prefill</dt><dd>一次性读入整段输入</dd>
+        <dt>decode</dt><dd>逐个生成输出 token，速度受显存带宽限制</dd>
+        <dt>KV 缓存</dt><dd>已处理内容的中间结果，占显存</dd>
+        <dt>前缀缓存</dt><dd>新输入开头与旧输入相同时复用 KV 缓存，跳过这部分 prefill</dd>
+        <dt>p95 延迟</dt><dd>95% 的 request 在此时间内完成</dd>
+      </dl>
+    </div>
+    <p>图是智能体的组成：大模型扮演执行者、规划者、反思模块等角色，记忆、计划和工具为其提供支持。整体上是“LLM 推理”和“使用工具”两个阶段交替进行[[two-phases]]。这一交替结构是后面所有测量结果的根源：推理阶段 GPU 在忙，工具阶段 GPU 可能在等，而每一次推理的输入都比上一次更长。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>动机、实验、发现、主张</h2></div>
+    <div class="flow">
+      <div class="step"><h3>动机</h3><p>智能体完成一个 request 往往要调用几十次大模型[[dozens]]，但体系结构研究主要针对静态大模型[[gap]]，基础设施可能在为过时的负载而优化[[yesterday]]。</p></div>
+      <div class="step"><h3>实验</h3><p>五种智能体在四个 benchmark 上运行，以普通聊天作对照。依次测单个 request 的执行、并发服务、多花计算换来的准确率，最后外推到数据中心规模。</p></div>
+      <div class="step key"><h3>发现</h3><p>多花计算能提高准确率，但收益迅速递减；延迟波动变大；GPU 在工具执行时闲置；基础设施成本难以持续[[findings]]。</p></div>
+      <div class="step"><h3>主张</h3><p>智能体设计应从堆计算转向考虑成本的推理，优化单位成本换来的准确率[[compute-aware]]。</p></div>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">被测对象</span><h2>五种智能体</h2><span class="fn">Table I</span><span class="fn">Fig. 3</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>智能体</th><th class="c">推理</th><th class="c">使用工具</th><th class="c">反思</th><th class="c">树搜索</th><th class="c">结构化规划</th></tr></thead>
+      <tbody>
+        <tr><td>CoT</td><td class="y">✓</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr><td>ReAct</td><td class="y">✓</td><td class="y">✓</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr><td>Reflexion</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr><td>LATS</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="x">✗</td></tr>
+        <tr><td>LLMCompiler</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="x">✗</td><td class="y">✓</td></tr>
+      </tbody>
+    </table></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cost/fig3.png" alt="五种智能体的执行时间线" loading="lazy"></button>
+    </figure>
+    <p>五种智能体按能力逐级叠加。CoT 只在内部推理，作为基准。ReAct 让推理和工具调用交替进行。Reflexion 再定期回顾过程、总结经验。LATS 用蒙特卡洛树搜索在每一步评估多个候选分支。LLMCompiler 先把工具调用排成依赖图，再并行执行。Fig. 3 是它们的执行时间线，方块长度代表耗时，可以直接看到成本的来源：除 CoT 外都在反复调用模型，LATS 还在每一步成倍地调用。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>实验对象和分组</h2><span class="fn">Table II</span><span class="src">§III</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>benchmark</th><th>一个 request 是</th><th>工具</th></tr></thead>
+      <tbody>
+        <tr><td>HotpotQA</td><td>一道多跳问答题</td><td>维基百科 API，每次约 1.2 秒</td></tr>
+        <tr><td>WebShop</td><td>一个购物要求</td><td>本地网页搜索和点击，每次约 20 毫秒</td></tr>
+        <tr><td>MATH</td><td>一道数学题</td><td>Wolfram Alpha、Python 计算器</td></tr>
+        <tr><td>HumanEval</td><td>一道编程题</td><td>运行自写测试，测试生成工具也用 GPU</td></tr>
+        <tr><td>ShareGPT</td><td colspan="2">一轮真实聊天，只调用一次大模型，作为非智能体的对照</td></tr>
+      </tbody>
+    </table></div>
+    <p>四个 benchmark 的工具差别很大，正好用来观察工具对资源的影响。全文的实验分四组，下面每组开头说明它要回答的问题：</p>
+    <div class="tbl"><table>
+      <thead><tr><th>实验组</th><th class="wrap">要回答的问题</th><th class="wrap">改变什么</th></tr></thead>
+      <tbody>
+        <tr><td>单个 request</td><td class="wrap">一个 request 内部时间和资源花在哪？</td><td class="wrap">智能体、benchmark</td></tr>
+        <tr><td>并发服务</td><td class="wrap">一块 GPU 能撑多大流量？</td><td class="wrap">QPS、前缀缓存开关</td></tr>
+        <tr><td>测试时扩展</td><td class="wrap">多花计算换来多少准确率？</td><td class="wrap">步数预算、示范例子数、反思轮数、子节点数、模型规模</td></tr>
+        <tr><td>基础设施外推</td><td class="wrap">推到大规模使用量需要多少能源？</td><td class="wrap">单次能耗 × 流量假设</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">默认环境：vLLM 0.6.6 开启前缀缓存，Llama-3.1-8B 运行在单块 A100 40GB；需要比较模型规模时用 70B，运行在 8 块 A100。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验组：单个 request 内部发生了什么</h2>
+    <p>一次只处理一个 request，排除并发的影响，分别测调用次数、时间构成、GPU 使用和输入长度。比较对象是不用工具的 CoT 和普通聊天。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 4</span><h2>一个 request 调用多少次大模型和工具</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig4.png" alt="LLM 与工具调用次数" loading="lazy"></button></figure>
+    <p>纵轴是每个 request 的平均调用次数，每个小图的刻度不同。CoT 只调用一次大模型，使用工具的智能体平均是它的 9.2 倍，LATS 平均达到 71 次[[lats-71]]，因为它扩展搜索树时要为每个子节点单独推理。调用次数是后面所有成本的第一个放大因素。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 5</span><h2>时间花在推理还是工具上</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig5.png" alt="延迟拆分" loading="lazy"></button></figure>
+    <p>柱子（左轴）是一个 request 总时间的构成，菱形（右轴）是它的总耗时。平均来看大模型推理占 69.4%，工具占 30.2%[[lat-split]]，但比例取决于工具快慢：WebShop 的工具很快，几乎全是红色；HotpotQA 的维基百科调用慢，黑色占比明显变大。</p>
+    <p>两部分难以同时进行，因为互相依赖：要有大模型的输出才知道调哪个工具[[dependency]]，下一次推理又要用到工具的结果。粉色是 LLMCompiler 把工具调用提前发出造成的重叠，也只占总时间的 18.2%[[overlap]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 6</span><h2>GPU 是否闲着</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig6.png" alt="GPU 时间拆分" loading="lazy"></button></figure>
+    <p>柱子是 GPU 时间用在 prefill、decode 和空闲上的比例，菱形是平均 GPU 利用率。HotpotQA 和 MATH 的工具在 CPU 或外部服务上运行，GPU 空闲最多占 54.5%[[idle]]。WebShop 工具快，HumanEval 工具本身用 GPU，空闲就不明显。可见 GPU 是否闲置取决于工具在哪里运行、运行多久。</p>
+    <p>GPU 工作时，74.1% 的时间是 decode，只有 4.7% 是 prefill，而 decode 受显存带宽限制[[decode]]，计算单元同样用不满。一个 request 内部挤不出更多并行，提高利用率只能靠同时处理多个 request。这引出了后面的并发实验。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 7</span><h2>每个 request 的耗时有多不确定</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig7.png" alt="端到端延迟分布" loading="lazy"></button></figure>
+    <p>这是 request 总耗时的分布。普通聊天集中，95% 在 9.7 秒内完成；ReAct 在 HotpotQA 和 WebShop 上的 p95 分别是 20.7 秒和 50.8 秒，右侧拖着长尾。长尾来自步数的不确定，有的问题很快答出，有的要反复搜索，一个 request 要多久事先无法预估，这对需要承诺响应时间的服务很不友好。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 8</span><h2>每次 LLM call 的输入有多长</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig8.png" alt="输入输出 token 构成" loading="lazy"></button></figure>
+    <p>纵轴是 token 数。灰色是任务说明和示范例子，黑色是用户问题，绿色是之前模型输出的累积，黄色是之前工具结果的累积，红色是本次输出。绿色和黄色就是智能体多出来的部分：每次调用都要带上之前的推理和工具结果。HotpotQA 一开始约 1000 token，会涨到 3 到 4 倍。问答和网购任务的工具返回内容长，黄色大；数学和编程任务模型自己写得多，绿色大。LATS 是例外，它只带从根节点到当前节点的路径。</p>
+    <p>输入变长的直接后果是显存：用工具的智能体每个 request 的 KV 缓存平均是 CoT 的 3 倍，最多 5.4 倍[[mem-3x]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 9</span><h2>前缀缓存能省下多少时间</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig9.png" alt="前缀缓存开关下的推理延迟" loading="lazy"></button></figure>
+    <p>每种智能体的两根柱子比较前缀缓存关闭和开启时单次推理的延迟，下部红色是 prefill，上部是 decode。相邻两次调用的开头完全相同，正是前缀缓存擅长的情况。开启后 prefill 时间平均减少 60.1%[[prefill-60]]，单次推理总时间平均减少 15.7%，减得没那么多是因为 decode 不受直接影响。CoT 只调用一次，几乎不受益。LATS 同时评估的子节点开头相同，可以共用一份 KV 缓存，显存需求平均减少 64.8%。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验组：同时服务很多 request</h2>
+    <p>前面提出 GPU 的空闲只能靠并发利用。这组实验测一块 GPU 实际能撑多大流量，以及前缀缓存在并发时的作用。</p>
+  </div>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">实验</span><span class="fn">Fig. 10</span><h2>并发实验的系统</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig10.png" alt="智能体服务系统示意" loading="lazy"></button></figure>
+    <p>request 按泊松过程随机到达服务入口[[poisson]]，分给智能体工作进程。工作进程在需要推理时向 vLLM 发出 LLM call，多个进程的调用在 vLLM 里拼批；需要工具时调用外部工具。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 11</span><h2>一块 GPU 能撑多少 QPS</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig11.png" alt="p95 延迟随 QPS 变化" loading="lazy"></button></figure>
+    <p>横轴是每秒送入的 request 数，纵轴是 p95 延迟，曲线上翘的拐点就是可持续的最大吞吐[[knee]]。并发把 ReAct 的吞吐从 0.10 和 0.19 QPS 提高到 2.6 和 1.2 QPS，平均延迟只变为 2.1 倍[[concurrency]]，HotpotQA 工具慢、GPU 空闲多，提升也最多。即便如此，它们也只有普通聊天 6.4 QPS 的约四成和五分之一[[peak-qps]]。</p>
+    <p>实线和虚线比较前缀缓存的开关。聊天的吞吐只提高到 1.03 倍，ReAct 提高到 5.62 倍[[prefix-5x]]：没有前缀缓存时，长 prefill 占住 GPU，堵住同批其他 request 的 decode，智能体多次调用放大了这种阻塞。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 12</span><h2>前缀缓存省下多少显存</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig12.png" alt="前缀缓存开关下的 KV 缓存占用" loading="lazy"></button></figure>
+    <p>纵轴是 KV 缓存占用的显存，W/o 是关闭前缀缓存，W/ 是开启，流量固定（HotpotQA 0.2 QPS，WebShop 0.1 QPS）。开启后平均和峰值占用分别下降 51.7% 和 63.5%[[kv-mem]]。单 request 实验中除 LATS 外看不到这个收益，并发时不同 request 之间才能共享前缀。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验组：多花计算换来多少准确率</h2>
+    <p>前面只看成本，这组把准确率也放进来。每种配置跑 50 道题[[fifty]]，准确率按各 benchmark 的官方方法计算，成本用 request 总耗时衡量。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 13</span><h2>所有配置上的准确率和成本</h2></div>
+    <div class="figgrid">
+      <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig13.png" alt="设计点的精度-延迟与成本效率" loading="lazy"></button></figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>每个点是一种配置（示范例子数、最大步数等不同）。上排纵轴是准确率，下排纵轴是准确率除以延迟，即性价比；横轴都是延迟，对数刻度。</p>
+        <p>所有智能体和任务上规律一致：计算越多准确率越高，但每多花一份计算换来的准确率越来越少[[diminishing]]。ReAct 延迟低、准确率中等；Reflexion 准确率略高、延迟明显增加；LATS 准确率更高、开销大得多；LLMCompiler 在 HotpotQA 上又快又准，在步骤前后依赖强的 WebShop 上会产生多余的工具调用，效率反而不如 ReAct。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 14</span><h2>放宽最大步数值得吗</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig14.png" alt="迭代预算的影响" loading="lazy"></button></figure>
+    <p>只改变 ReAct 允许的最大步数，横轴是这个上限。灰柱是平均延迟，黑柱是 p95 延迟，红线是准确率，蓝线是性价比。起初准确率上升，很快红线和灰柱都不再增长，黑柱却继续直线上升[[tail-linear]]。拉高尾部的是少数做不出来、把步数用光的任务，它们消耗大量计算，几乎不贡献准确率。蓝色菱形标出性价比最高的配置，它不在准确率最高处。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 15</span><h2>增加示范例子值得吗</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig15.png" alt="few-shot 数量的影响" loading="lazy"></button></figure>
+    <p>横轴换成提示中示范例子的个数，其余读法与 Fig. 14 相同。增加例子起初明显提高准确率，之后收益变小甚至下降。平均延迟反而随例子增多而下降[[fewshot]]，因为好的例子让智能体用更少的步数完成任务，省下的步数抵消了提示变长的代价。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 16</span><h2>多想几轮，还是同时试几条路</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig16.png" alt="顺序与并行扩展的精度-延迟" loading="lazy"></button></figure>
+    <p>这是两种增加计算的方式，都在 HotpotQA 上，横轴延迟、纵轴准确率，颜色越深扩展越多。(a)(b) 是顺序扩展，增加反思轮数；(c) 是并行扩展，增加 LATS 每次扩展的子节点数。</p>
+    <p>顺序扩展越往后越不划算：Reflexion 多换 4 个百分点准确率，从 16.9 秒的配置出发多花 8.7 秒，从 56.0 秒的配置出发要多花 269.5 秒，成本是前者的 31 倍[[31x]]。并行扩展的子节点从 1 增加到 16，准确率提高 14.4 个百分点，平均延迟反而减少 196.3 秒[[parallel]]，代价是同时发出更多 LLM call，显存压力更大。所以延迟敏感、资源充足时用并行扩展[[parallel-advice]]；资源紧张时用顺序扩展，峰值资源需求低，代价是延迟高。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 17</span><h2>小模型配好策略能否接近大模型</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig17.png" alt="8B 与 70B 的精度-延迟、token、能耗" loading="lazy"></button></figure>
+    <p>上排 Reflexion，下排 LATS；三列的横轴分别是延迟、总 token 数和 GPU 能耗，纵轴都是准确率。70B 用更少的步数和 token 就能达到高准确率，8B 要多想很多步。LATS 这一排 8B 接近 70B 的准确率[[8b-70b]]，Reflexion 这一排则追不上。由于 8B 只用 1 块 A100、70B 用 8 块，8B 的总能耗反而更低。测试时策略能在一定程度上弥补模型规模的不足。</p>
+  </section>
+
+  <div class="band">
+    <h2>外推：放大到数据中心规模</h2>
+    <p>这部分是论文最后一步（§VI）的推算，建立在前面的测量之上，不是独立的测量。论文用它说明成本问题的量级。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">外推</span><h2>单次能耗和所需功率</h2><span class="fn">Table III</span><span class="fn">Table IV</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th rowspan="2">模型</th><th rowspan="2">负载</th><th class="r" rowspan="2">准确率</th><th class="r" rowspan="2">单 request 耗时</th><th class="r" rowspan="2">单 request GPU 能耗</th><th class="g" colspan="2">推算的数据中心功率，按每天 request 数</th></tr>
+      <tr><th class="r gl">7140 万</th><th class="r">137 亿</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">8B，1 块 A100</td><td>普通聊天</td><td class="r">不适用</td><td class="r">4.23 s</td><td class="r">0.32 Wh</td><td class="r gl">1.0 MW</td><td class="r">182.7 MW</td></tr>
+        <tr><td>Reflexion</td><td class="r">38%</td><td class="r">649.34 s</td><td class="r">41.53 Wh（130.9 倍）</td><td class="r gl">123.6 MW</td><td class="r">23.7 GW</td></tr>
+        <tr><td>LATS</td><td class="r">80%</td><td class="r">380.90 s</td><td class="r">22.76 Wh（71.7 倍）</td><td class="r gl">67.7 MW</td><td class="r">13.0 GW</td></tr>
+        <tr><td rowspan="3">70B，8 块 A100</td><td>普通聊天</td><td class="r">不适用</td><td class="r">6.40 s</td><td class="r">2.55 Wh</td><td class="r gl">7.6 MW</td><td class="r">1.5 GW</td></tr>
+        <tr><td>Reflexion</td><td class="r">67%</td><td class="r">720.00 s</td><td class="r">348.41 Wh（136.5 倍）</td><td class="r gl">1.0 GW</td><td class="r">198.9 GW</td></tr>
+        <tr><td>LATS</td><td class="r">82%</td><td class="r">305.67 s</td><td class="r">158.48 Wh（62.1 倍）</td><td class="r gl">471.5 MW</td><td class="r">90.5 GW</td></tr>
+      </tbody>
+    </table></div>
+    <p>能耗列是实测：在 HotpotQA 上逐个处理 request，取 Fig. 17 中准确率最高的配置，智能体单个 request 的 GPU 能耗是普通聊天的 62 到 137 倍[[energy]]。功率列是推算：能耗乘每天 request 数再除以 24 小时。7140 万对应 ChatGPT 日活的保守估计、每人每天一个智能体 request，137 亿对应谷歌搜索的查询量。论文的结论是，每天几千万次 request、单次超过约 100 Wh 时，所需功率达到吉瓦级[[gw-threshold]]。</p>
+    <p>这组数字应当作为量级上的警示来读，它们有明显偏高的一面。Table III 是一次只处理一个 request 时测的，没有计入拼批处理的摊薄[[conservative]]，而本文自己测到并发能把吞吐提高 6 到 25 倍；外推用的又是最贵的配置，Fig. 13 到 Fig. 15 表明存在性价比高得多的配置。偏低的一面是只算 GPU、且 70B 比如今最大的模型小得多。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>智能体的成本可以拆成三个相乘的因素：调用次数成倍增加，每次调用的输入随历史累积而变长，调用之间夹着让 GPU 空等的工具时间。前缀缓存和并发处理能缓解后两个因素。一块 GPU 能撑的 QPS 仍只有聊天的几分之一，而测试时扩展本身面临收益递减，继续堆计算换来的准确率越来越少。</p>
+    <p>据此，智能体设计应从堆计算转向考虑成本的推理[[compute-aware]]。可行的方向包括：量化、蒸馏，按角色混用大小模型；按任务难度动态分配计算；在推理系统上采用分层 KV 缓存与缓存压缩、利用智能体输出格式固定的特点做推测解码、把 prefill 和 decode 分开部署以减少互相干扰。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>业界对智能体还没有公认的服务质量标准，分析没有、也难以针对某个具体的延迟目标[[no-sla]]，它描绘的是不同配置下准确率和成本的取舍。实验规模也不大：每种配置 50 道题，A100 40GB，vLLM 0.6.6，最大 70B 模型。</p>
+    <p>换成新的硬件、推理引擎和更大的模型，绝对数字会变，但准确率收益递减、尾部延迟上升、工具执行时 GPU 闲置、前缀缓存对智能体特别重要这些规律与具体硬件关系不大，参考价值更持久。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="first"><blockquote lang="en">This paper presents the first comprehensive system-level analysis of AI agents, quantifying their resource usage, latency behavior, energy consumption, and datacenter-wide power consumption demands across diverse agent designs and test-time scaling strategies.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="findings"><blockquote lang="en">Our findings reveal that while agents improve accuracy with increased compute, they suffer from rapidly diminishing returns, widening latency variance, and unsustainable infrastructure costs.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="tts"><blockquote lang="en">Test-time scaling is designed to enhance model performance by allocating additional computation during inference without modifying the model’s parameters.</blockquote><p class="loc">第 I 节，第 1 页</p></li>
+      <li data-key="gap"><blockquote lang="en">Yet, despite these developments, the computer architecture community has largely focused on static LLMs, leaving the infrastructure implications of dynamic reasoning workloads underexplored.</blockquote><p class="loc">第 I 节，第 2 页</p></li>
+      <li data-key="two-phases"><blockquote lang="en">These workflows can be broadly decomposed into two phases: (1) LLM inference phase, where the agent performs internal reasoning tasks such as action generation, planning, or reflection; and (2) tool use phase, where the agent interacts with external environments using tools.</blockquote><p class="loc">第 II-B 节，第 2 至 3 页</p></li>
+      <li data-key="yesterday"><blockquote lang="en">the community risks building infrastructure optimized for yesterday’s workloads.</blockquote><p class="loc">第 II-D 节，第 3 页</p></li>
+      <li data-key="lats-71"><blockquote lang="en">Among these, LATS exhibits the highest LLM invocation count, with an average of 71.0 LLM calls per request.</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="lat-split"><blockquote lang="en">On average, LLM inference and tool execution account for 69.4% and 30.2% of total latency, respectively.</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="dependency"><blockquote lang="en">Specifically, the LLM output is needed to determine which tool to invoke</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="overlap"><blockquote lang="en">the observed overlap accounts for only 18.2% of total latency.</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="idle"><blockquote lang="en">In contrast, HotpotQA and MATH employ tools that operate on local CPUs or external systems, leading to substantial GPU idle periods that account for up to 54.5% of total execution time</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="decode"><blockquote lang="en">As noted in [2], [4], [8], [34], the decode stage is known to be memory-bound.</blockquote><p class="loc">第 IV-A 节，第 5 页</p></li>
+      <li data-key="prefill-60"><blockquote lang="en">prefix caching reduces prefill latency by an average of 60.1%</blockquote><p class="loc">第 IV-B 节，第 7 页</p></li>
+      <li data-key="mem-3x"><blockquote lang="en">On average, tool-augmented AI agents consume 3.0× more memory per request than CoT, and up to 5.4× more in the worst case.</blockquote><p class="loc">第 IV-B 节，第 7 页</p></li>
+      <li data-key="concurrency"><blockquote lang="en">achieving 25× and 6.2× gains at the cost of a 2.1× increase in average latency.</blockquote><p class="loc">第 IV-C 节，第 7 页</p></li>
+      <li data-key="peak-qps"><blockquote lang="en">While ShareGPT can sustain up to 6.4 QPS, ReAct supports only 2.6 QPS on HotpotQA and 1.2 QPS on WebShop, even with prefix caching enabled.</blockquote><p class="loc">第 IV-C 节，第 8 页</p></li>
+      <li data-key="prefix-5x"><blockquote lang="en">In contrast, ReAct benefits significantly, achieving an average 5.62× increase in throughput.</blockquote><p class="loc">第 IV-C 节，第 8 页</p></li>
+      <li data-key="kv-mem"><blockquote lang="en">With prefix caching enabled, the average and maximum KV cache memory usage decrease by 51.7% and 63.5%, respectively</blockquote><p class="loc">第 IV-C 节，第 8 页</p></li>
+      <li data-key="diminishing"><blockquote lang="en">Across all agents and workloads, we observe a consistent pattern: as computation cost increases, accuracy improves, but with diminishing returns.</blockquote><p class="loc">第 V-A 节，第 9 页</p></li>
+      <li data-key="tail-linear"><blockquote lang="en">However, both accuracy and average latency eventually saturate, while the 95th percentile latency continues to increase linearly.</blockquote><p class="loc">第 V-A 节，第 9 页</p></li>
+      <li data-key="fewshot"><blockquote lang="en">Interestingly, average latency decreases as more examples are added.</blockquote><p class="loc">第 V-A 节，第 9 页</p></li>
+      <li data-key="31x"><blockquote lang="en">However, achieving the same model accuracy improvement from a later point (56.0s) requires a much larger increase in latency (269.5s), a 31× higher cost for the same marginal gain.</blockquote><p class="loc">第 V-B 节，第 10 页</p></li>
+      <li data-key="parallel"><blockquote lang="en">Increasing the number of child nodes from 1 to 16 improves accuracy by 14.4 percentage points while simultaneously reducing latency by 196.3s on average.</blockquote><p class="loc">第 V-B 节，第 10 页</p></li>
+      <li data-key="parallel-advice"><blockquote lang="en">Parallel scaling is effective for latency-sensitive workloads, as it allows the agent to explore multiple reasoning paths at once and reach better answers faster.</blockquote><p class="loc">第 V-B 节，第 10 页</p></li>
+      <li data-key="8b-70b"><blockquote lang="en">with LATS and parallel scaling, the 8B model achieves near-70B performance by exploring multiple paths and selecting the best one.</blockquote><p class="loc">第 V-B 节，第 10 页</p></li>
+      <li data-key="energy"><blockquote lang="en">These figures correspond to a 62.1×–136.5× increase in GPU energy per query under agent-based test-time scaling (vs. single-turn LLM inference).</blockquote><p class="loc">第 VI 节，第 10 页</p></li>
+      <li data-key="conservative"><blockquote lang="en">Although our analysis does not account for LLM request batching [32], [98], which can amortize execution overheads, the estimate remains conservative for three reasons</blockquote><p class="loc">第 VI 节，第 11 页</p></li>
+      <li data-key="gw-threshold"><blockquote lang="en">Overall, our estimates indicate that even modest user traffic (on the order of tens of millions of queries per day) becomes gigawatt-scale once per-query energy exceeds ∼100 Wh, a threshold representative of current agentic workloads.</blockquote><p class="loc">第 VI 节，第 11 页</p></li>
+      <li data-key="compute-aware"><blockquote lang="en">Rather than relying on brute-force test-time scaling, future agents should adopt compute-aware reasoning strategies that optimize accuracy per unit cost.</blockquote><p class="loc">第 IX 节，第 13 页</p></li>
+      <li data-key="no-sla"><blockquote lang="en">Consequently, we did not (and realistically could not) conduct our analysis with respect to a specific SLA target.</blockquote><p class="loc">第 VII 节，第 12 页</p></li>
+      <li data-key="dozens"><blockquote lang="en">often performing dozens of inference calls to satisfy a single user request</blockquote><p class="loc">第 I 节，第 1 页</p></li>
+      <li data-key="poisson"><blockquote lang="en">To simulate realistic traffic, input queries to the agent server are randomly sampled and issued to the server following a Poisson arrival distribution</blockquote><p class="loc">第 IV-C 节，第 7 页</p></li>
+      <li data-key="knee"><blockquote lang="en">The peak throughput is measured as the maximum sustainable QPS at the knee of the tail latency curve.</blockquote><p class="loc">第 IV-C 节，第 7 页</p></li>
+      <li data-key="fifty"><blockquote lang="en">To assess each design point, we used a benchmark of 50 sample questions and measured the average accuracy and the computation cost for each.</blockquote><p class="loc">第 V 节，第 8 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

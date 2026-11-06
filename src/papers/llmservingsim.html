@@ -1,0 +1,459 @@
+<article class="view frame paper" id="view-llmservingsim" data-paper="llmservingsim" hidden>
+
+<header class="masthead">
+  <h1 lang="en">LLMServingSim 2.0: A Unified Simulator for Heterogeneous and Disaggregated LLM Serving Infrastructure</h1>
+  <p class="zh">LLMServingSim 2.0：面向异构、拆分式大模型推理服务基础设施的统一模拟器</p>
+  <p class="by">Jaehong Cho、Hyunmin Choi、Guseul Heo、Jongse Park，KAIST</p>
+  <div class="meta">
+    <span class="venue">arXiv 2602.23036v2，cs.DC，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>大模型推理服务</span><span>性能模拟器</span><span>异构与拆分部署</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2></div>
+    <div class="tree">
+      <div>大模型推理服务的性能模拟</div>
+      <div style="--d:1">硬件级模拟器：LLMCompass、ADOR、ASTRA-sim</div>
+      <div style="--d:1">系统级模拟器：Vidur、APEX、TokenSim、LLMServingSim</div>
+      <div style="--d:2" class="on"><b>请求级、异构硬件与拆分部署：LLMServingSim 2.0</b></div>
+      <div style="--d:3">program 级，建在它之上：<a class="plink as-t" href="#agentservesim">AgentServeSim</a></div>
+    </div>
+    <p>新的推理服务硬件和部署方式在真机上很难逐个试：要有设备，要搭大规模环境，连粗略比较几种方案都要投入大量工程。模拟器因此成为早期探索的主要工具。现有的两类模拟器各缺一块。硬件级模拟器算得细，但只看固定的算子执行，没有 request 到达、组批变化和缓存复用[[hw-centric]]。系统级模拟器有服务层，但前缀缓存、prefill 与 decode 分开部署、异构设备这些近年的主流手段支持有限[[vidur]]。</p>
+    <p>LLMServingSim 2.0 的目标是把这两部分放进一个循环里模拟。它的上一版只支持单个实例，也没有混合专家模型和前缀缓存[[ls1]]，2.0 在此基础上扩展到多实例、异构设备和这些服务技术。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2></div>
+    <dl class="defs">
+      <dt>prefill 与 decode</dt><dd>prefill 一次处理全部输入，主要吃算力。decode 逐个生成 token，每步都要读 KV 缓存，主要受内存带宽、容量和缓存位置限制[[prefill-decode]]。两个阶段需要的硬件不同，这是后面拆分部署和 PIM 的出发点。</dd>
+      <dt>KV 缓存</dt><dd>模型为已处理的每个 token 存下的中间结果，随输出变长而增长，占显存。</dd>
+      <dt>前缀缓存</dt><dd>新 request 开头和已缓存内容相同时，复用这部分 KV 缓存，跳过 prefill。</dd>
+      <dt>混合专家模型（MoE）</dt><dd>每层有多个专家子网络，每个 token 只激活其中几个。相对地，每个 token 都走全部参数的模型叫 dense 模型。</dd>
+      <dt>PIM</dt><dd>processing-in-memory，内存芯片里带计算单元，数据不用搬到加速器上就能做部分运算。CXL 是一种可以外接大容量内存池的互连。</dd>
+      <dt>TTFT、TPOT、ITL、TPS</dt><dd>第一个 token 的等待时间；平均每个输出 token 的时间；相邻 token 的间隔；每秒生成的 token 数。前三个针对单个 request，TPS 针对整个系统。</dd>
+      <dt>TP、PP、DP、EP</dt><dd>四种把模型放到多个设备上的方式：张量并行切分每层的张量，流水线并行按层切分，数据并行多放几份副本各接各的 request，专家并行把 MoE 的专家分到不同设备。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、方法、验证、用途</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>服务系统的性能不再单独由硬件或软件决定，而取决于两者运行时的互相影响[[isolation]]。现有模拟器无法把异构硬件和拆分部署放在一个运行时框架里模拟[[abstract-gap]]。</p></div>
+      <div class="step key"><h3>方法</h3><p>把服务决策和硬件行为放进一个循环[[abstract-loop]]：组批、放置、插入数据搬运，由 ASTRA-sim 算出耗时，结果再影响下一轮决策。硬件用算子级 profile 描述。</p></div>
+      <div class="step"><h3>验证</h3><p>和 RTX A6000、H100、TPU 上的真实 vLLM 对比吞吐、延迟、显存、功耗，摘要给出的平均误差是 0.95%，模拟耗时约 10 分钟[[abstract-err]]。</p></div>
+      <div class="step"><h3>用途</h3><p>评估手头没有的硬件和部署。案例是给 GPU 加上 PIM，只在模拟器中进行：decode 阶段吞吐提高到 1.43 倍，每 token 能耗降低 14.8%。</p></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">机制</span><h2>模拟对象：一个 request 在服务系统里经历什么</h2><span class="src">§II、§III-A</span></div>
+    <p>模拟器要复现的是下面这条路径。多个 request 同时在路径上，每一步的资源都被别的 request 占着，所以一个 request 的耗时取决于当时系统里还有谁。</p>
+    <div class="chain">
+      <div class="node"><b>request 到达</b><small>到达时刻来自负载配置</small></div><span class="arr">→</span>
+      <div class="node"><b>路由</b><small>选一个服务实例</small></div><span class="arr">→</span>
+      <div class="node"><b>排队，进入 batch</b><small>取决于内存放不放得下</small></div><span class="arr">→</span>
+      <div class="node"><b>prefill</b><small>命中前缀缓存可跳过一部分</small></div><span class="arr">→</span>
+      <div class="node hot"><b>decode，反复执行</b><small>KV 缓存增长，可能在内存层之间搬运</small></div><span class="arr">→</span>
+      <div class="node"><b>完成，释放资源</b><small>队列里的 request 才能进来</small></div>
+    </div>
+    <p>只把每个算子的耗时加起来算不出这条路径的结果：batch 的组成不断变化，KV 缓存在哪一层决定访问多快，不同设备要互相等待，路由可能不均衡[[static]]。这些都要随时间逐步推演。下面这个例子是示意：一次 KV 搬运变慢，这个 request 晚一点结束，它占的显存也晚一点释放，下一个 batch 就放不下那么多 request，吞吐因此下降，排队又变长。论文所说的“交互”指的就是这种连锁反应。</p>
+    <p>近年的两个趋势让这条路径更复杂。一是异构：一个集群里可能有不同代的 GPU、TPU、NPU、PIM 和 CXL 设备，算力、带宽、容量和功耗各不相同。二是拆分：把原本放在一起的部分分开，每种分法都带来新的数据搬运。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>拆分方式</th><th class="wrap">分开了什么，为什么要分</th><th class="wrap">模拟器必须多算的开销</th></tr></thead>
+      <tbody>
+        <tr><td>prefill 与 decode 分离</td><td class="wrap">两个阶段放到不同的实例，prefill 不再打断 decode，各自可选合适的硬件</td><td class="wrap">KV 缓存从 prefill 实例传到 decode 实例，受网络拓扑和带宽限制</td></tr>
+        <tr><td>注意力卸载</td><td class="wrap">注意力算子放到 PIM 上，其余留在 GPU，因为注意力要大量读 KV 缓存</td><td class="wrap">中间结果和 KV 缓存在两种设备间来回传，还要互相同步</td></tr>
+        <tr><td>专家并行与卸载</td><td class="wrap">MoE 的专家分到多个设备，暂时不用的移到主机内存，省显存</td><td class="wrap">token 的路由、设备间全互联通信、加载被移走的专家</td></tr>
+        <tr><td>多层前缀缓存</td><td class="wrap">缓存放到显存、主机内存、CXL 内存池，容量更大，还能跨实例共享</td><td class="wrap">命中在下层时要把 KV 缓存逐层搬回显存，还会争抢带宽</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">问题</span><h2>现有模拟器缺什么</h2><span class="fn">Table I</span></div>
+    <p>Table I 用十个问题比较五个系统级模拟器，分成三组。第一组问能否表达拆分和异构的部署，第二组问能否表达模型在多设备上的放法，第三组问是否模拟了某种运行时行为。✔ 为完全支持，△ 为部分支持，✗ 为不支持。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>列（原文）</th><th class="wrap">这一列在问什么</th><th class="wrap">打 ✔ 的样子</th><th class="wrap">打 ✗ 的样子</th></tr></thead>
+      <tbody>
+        <tr><td>PD<small>Prefill/Decode Disaggregation</small></td><td class="wrap">prefill 和 decode 能放到不同实例吗？</td><td class="wrap">设定 M 个 prefill 实例配 N 个 decode 实例，KV 传输计入耗时</td><td class="wrap">一个实例包办两个阶段，这种部署配置不出来</td></tr>
+        <tr><td>AF<small>Attention/FFN Disaggregation</small></td><td class="wrap">一层之内的注意力和前馈网络能放到不同设备吗？</td><td class="wrap">注意力在 PIM 上，前馈网络在 GPU 上</td><td class="wrap">一层只能整体放在一种设备上</td></tr>
+        <tr><td>HT<small>Heterogeneous System</small></td><td class="wrap">一个系统能混用不同种类的设备吗？</td><td class="wrap">H100 配 PIM，或 H100 做 prefill、A100 做 decode</td><td class="wrap">整个系统只有一种设备</td></tr>
+        <tr><td>PP/TP<small>Pipeline/Tensor Parallelism</small></td><td class="wrap">模型能切到多个设备上吗？</td><td class="wrap">TP 4 时计入四卡之间的同步和通信</td><td class="wrap">一个模型只放在一个设备上</td></tr>
+        <tr><td>DP<small>Data Parallelism</small></td><td class="wrap">能模拟多个副本同时服务吗？</td><td class="wrap">多个实例各接各的 request，由路由器分配</td><td class="wrap">只有一个实例</td></tr>
+        <tr><td>EP<small>Expert Parallelism</small></td><td class="wrap">能把 MoE 专家分到多个设备并模拟 token 路由吗？</td><td class="wrap">EP 4 时算出每个 token 去哪台、通信多久</td><td class="wrap">不能运行 MoE，或把它当 dense 模型算</td></tr>
+        <tr><td>PA<small>PagedAttention</small></td><td class="wrap">KV 缓存是否按 vLLM 的方式分块管理？</td><td class="wrap">内存按块计算，影响 batch 放不放得下</td><td class="wrap">不跟踪分块，内存占用只有粗略估计</td></tr>
+        <tr><td>PC<small>Prefix Caching</small></td><td class="wrap">是否模拟前缀缓存的命中和存放？</td><td class="wrap">命中减少计算，未命中时把 KV 缓存从下层搬回</td><td class="wrap">每个 request 都从头 prefill</td></tr>
+        <tr><td>EO<small>Expert Offloading</small></td><td class="wrap">专家能移出显存，用时再加载吗？</td><td class="wrap">加载时间计入执行图</td><td class="wrap">所有专家一直在显存里</td></tr>
+        <tr><td>PM<small>Power Modeling</small></td><td class="wrap">能算出功耗和能耗吗？</td><td class="wrap">输出随时间变化的功率和各部件能耗</td><td class="wrap">只有性能数字</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl"><table>
+      <thead>
+        <tr><th rowspan="2">模拟器</th><th class="g" colspan="3">拆分与异构</th><th class="g" colspan="3">并行方式</th><th class="g" colspan="4">运行时建模</th></tr>
+        <tr><th class="c gl">PD</th><th class="c">AF</th><th class="c">HT</th><th class="c gl">PP/TP</th><th class="c">DP</th><th class="c">EP</th><th class="c gl">PA</th><th class="c">PC</th><th class="c">EO</th><th class="c">PM</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>LLMServingSim</td><td class="x gl">✗</td><td class="y">✔</td><td class="x">✗</td><td class="y gl">✔</td><td class="x">✗</td><td class="x">✗</td><td class="y gl">✔</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr><td>Vidur</td><td class="x gl">✗</td><td class="x">✗</td><td class="x">✗</td><td class="y gl">✔</td><td class="y">✔</td><td class="x">✗</td><td class="p gl">△</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr><td>APEX</td><td class="x gl">✗</td><td class="x">✗</td><td class="x">✗</td><td class="y gl">✔</td><td class="y">✔</td><td class="y">✔</td><td class="x gl">✗</td><td class="x">✗</td><td class="x">✗</td><td class="y">✔</td></tr>
+        <tr><td>TokenSim</td><td class="y gl">✔</td><td class="x">✗</td><td class="x">✗</td><td class="y gl">✔</td><td class="p">△</td><td class="x">✗</td><td class="y gl">✔</td><td class="p">△</td><td class="x">✗</td><td class="x">✗</td></tr>
+        <tr class="me"><td>LLMServingSim 2.0</td><td class="y gl">✔</td><td class="y">✔</td><td class="y">✔</td><td class="y gl">✔</td><td class="y">✔</td><td class="y">✔</td><td class="y gl">✔</td><td class="y">✔</td><td class="y">✔</td><td class="y">✔</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">“这一列在问什么”和两个样子列是本页的解释，Table I 本身只给出列名和勾叉。分组名是原表的 Dissagg.、Parallelism、Modeling。</p>
+    <p>HT 列和 EO 列除了 2.0 全是 ✗，这正是它要补的部分。这张表说明的是“能配置出来”，不说明“算得准”。TokenSim 在 PD 上打 ✔，但后面 Fig. 8 里它的 TTFT 偏差到了 2.4 到 5.2 倍。论文指出它的内存抽象过于简化，KV 放置、带宽争抢和搬运都算不细[[tokensim]]。另外这十列是 2.0 自己的功能清单，全 ✔ 是选题决定的，比较时还要看实测误差。</p>
+  </section>
+
+  <div class="band">
+    <h2>系统：一个循环，三个组件</h2>
+    <p>先看整体循环（Fig. 1），再看循环里做决策的 MSG（Fig. 2）和计算耗时的 System Simulator，最后看硬件数据从哪里来。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>输入、循环、输出</h2><span class="fn">Fig. 1</span><span class="src">§IV-A、§IV-B</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/llmservingsim/fig1.png" alt="LLMServingSim 2.0 总览：输入、Execution Planner、Serving Engine 循环与输出" loading="lazy"></button>
+      </figure>
+      <ol class="callouts">
+        <li><b>三份输入</b><span>Workload 给出模型、request 内容和到达规律；Cluster Config 给出设备、内存、拓扑和服务策略；Profiles 给出每种设备上每个算子的耗时和功率。</span></li>
+        <li><b>Execution Planner 只运行一次</b><span>启动时按配置为每个模型建好 MSG，分配设备，装上策略，配好下面的模拟器。</span></li>
+        <li><b>红色箭头是循环</b><span>Router 把 request 分给 MSG，MSG 为当前 batch 生成执行图，System Simulator 算出结果并推进下一轮，直到所有 request 完成[[loop]]。</span></li>
+        <li><b>两种输出</b><span>运行时持续给出功率、内存、吞吐；结束后给出每个 request 的 TTFT、TPOT、排队时间、端到端延迟。</span></li>
+      </ol>
+    </div>
+    <p>循环的设计决定了这个模拟器能看到什么。执行图每轮新生成，所以 batch 里有谁、KV 缓存在哪、要插入哪些搬运，都按上一轮结束时的状态决定。System Simulator 算完后把结果返回，才有下一轮[[iter]]。如果事先把配置和算子耗时算成一个固定结果，前面例子里的连锁反应就不会出现。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>MSG：决策发生的地方</h2><span class="fn">Fig. 2</span><span class="src">§IV-C</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig2.png" alt="Model Serving Group 内部结构" loading="lazy"></button>
+    </figure>
+    <p>一个 MSG 对应一个大模型服务实例[[msg-unit]]。上半部分是配置：模型、策略、设备池，以及内存、功耗、性能三个模拟子模型。下半部分是流水线，走一遍产生一张执行图。</p>
+    <dl class="defs">
+      <dt>Batch Scheduler</dt><dd>从队列挑 request 组 batch。它要先问内存模型放不放得下，同时考虑前缀缓存的驻留情况和回收代价[[batch]]。内存因此直接影响 batch 大小，进而影响吞吐。</dd>
+      <dt>Operation Mapper</dt><dd>按并行方式和卸载规则把每个算子分给设备，并从 profile 取出它的耗时和功率。</dd>
+      <dt>Operation Scheduler</dt><dd>排出依赖关系，组成有向无环图，并插入所需的通信和内存操作。回收和换入缓存的开销也在此变成图上的节点[[eviction]]。</dd>
+    </dl>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>层级与术语：一词两用的地方</h2><span class="src">§IV</span></div>
+    <div class="chain">
+      <div class="node hot"><b>Serving Engine</b><small>整个循环</small></div><span class="arr">→</span>
+      <div class="node"><b>MSG</b><small>一个服务实例，有自己的设备池</small></div><span class="arr">→</span>
+      <div class="node"><b>batch</b><small>一轮一起执行的 request</small></div><span class="arr">→</span>
+      <div class="node"><b>执行图</b><small>节点是带标注的算子</small></div><span class="arr">→</span>
+      <div class="node"><b>operator</b><small>耗时和功率查 profile</small></div>
+    </div>
+    <p>论文里有几个词在两个层级上使用，读图时容易混淆，本页按下表区分。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>原词</th><th class="wrap">用法一</th><th class="wrap">用法二</th></tr></thead>
+      <tbody>
+        <tr><td>router</td><td class="wrap">Request Router：把 request 分给 MSG，在 MSG 之外</td><td class="wrap">Expert Router：把 token 分给专家，在 MSG 之内</td></tr>
+        <tr><td>scheduler</td><td class="wrap">Batch Scheduler：决定哪些 request 组成 batch</td><td class="wrap">Operation Scheduler：决定算子的依赖和顺序</td></tr>
+        <tr><td>model</td><td class="wrap">被服务的大模型（Llama、Mixtral）</td><td class="wrap">模拟器的子模型（内存模型、功耗模型、性能模型）</td></tr>
+        <tr><td>simulator</td><td class="wrap">LLMServingSim 2.0 整体</td><td class="wrap">System Simulator：其中算耗时的那个组件</td></tr>
+      </tbody>
+    </table></div>
+    <p>论文的“策略”（policy）是用户配置的选择，比如路由方式、并行方式、回收规则和卸载规则。“模型”是模拟器算开销的方法。换策略不需要改模型，这使比较不同部署只要改配置。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">系统</span><h2>System Simulator 算耗时</h2><span class="src">§IV-D</span></div>
+    <p>它接收 MSG 生成的执行图，节点带有设备类型、耗时、内存、通信和功率信息，边是依赖关系。它根据集群拓扑算出同步开销、网络争抢、设备间通信和访存延迟。</p>
+    <p>底层是修改过的 ASTRA-sim 和 Chakra。这两个框架原本面向训练那种简单重复的通信模式，不足以表达推理服务的动态过程[[astra]]。论文为此补上异构计算结构、由算子驱动的执行图和专家并行，把内存层级扩展到显存、主机内存、存储和 CXL 内存，并增加了 PIM 上的运算操作[[pim-ops]]。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">系统</span><h2>硬件数据从 profile 来</h2><span class="src">§IV-A</span></div>
+    <p>每种硬件的算子耗时和功率要先测出来。对一组“模型、设备”，只需跑一个 decode block，一般在 2.1 小时内完成，例如 H100 上的 Llama 3.1-70B[[profile]]。结果存下来，之后的实验反复使用，不再需要这台设备。只测一个 block 就够，本页的理解是大模型由结构相同的 block 堆叠而成，其余可以推算。</p>
+    <p>这也是加入新硬件的方式。手头没有实物时，profile 可以来自外部的硬件模拟器，PIM 就是这样接入的[[ext-profile]]。代价是这种情况下结果的可信度取决于外部模拟器，后面 PIM 案例要带着这一点看。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">系统</span><h2>功耗模型分七块</h2><span class="src">§IV-C</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>部件</th><th class="wrap">如何计算</th></tr></thead>
+      <tbody>
+        <tr><td>加速器</td><td class="wrap">三种状态：idle、active、standby，随利用率切换[[power-7]]</td></tr>
+        <tr><td>DRAM、互连</td><td class="wrap">与传输的数据量成正比</td></tr>
+        <tr><td>CPU、网卡、存储、其他</td><td class="wrap">恒定功率[[power-dram]]</td></tr>
+      </tbody>
+    </table></div>
+    <p>互连在这里包括交换机，“其他”包括主板和散热。功耗并入模拟的目的是让性能和能耗能一起比较：一种部署更快，但多带一组设备，总能耗未必下降。Fig. 10 的 PIM 案例就比较了这种取舍。</p>
+  </section>
+
+  <div class="band">
+    <h2>用法：四种部署怎样配置</h2>
+    <p>两张图展示 §V 的四种部署。它们有一个共同点：用户只写策略，通信、搬运和同步操作由模拟器自动插入执行图并计入耗时。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">用法</span><h2>单个 MSG 之内的两种部署</h2><span class="fn">Fig. 3</span><span class="src">§V-A</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig3.png" alt="MSG 级用法：异构设备和混合专家模型" loading="lazy"></button>
+    </figure>
+    <div class="fb">
+      <h3>(a) 异构设备：OPT-6.7B，1 块 H100 加 1 个 PIM</h3>
+      <p>颜色表示算子在哪个设备上执行。卸载规则把 Op1、Op2（绿色）放到 PIM，其余留在 H100。Operation Scheduler 在图中加入 Mov 和 Sync：注意力执行前把中间结果和 KV 缓存传到 PIM，结束后再传回来[[attn]]。这些传输算进总时间，所以卸载是否划算要由模拟结果决定。</p>
+    </div>
+    <div class="fb">
+      <h3>(b) 混合专家模型：Mixtral-8x7B，4 块 H100</h3>
+      <p>Expert Router 模拟门控网络，逐 token 决定去哪个专家[[moe-router]]，可选随机、轮询、按比例均衡或自定义规则。图中专家 4 已被移出显存（虚线框），有 token 路由到它时，执行图就出现 Ld 加载节点。这个节点也由调度器自动生成[[moe-graph]]。token 的走向决定了加载和通信多少，因此每轮的执行图都不一样。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">用法</span><h2>多个 MSG 之间的两种部署</h2><span class="fn">Fig. 4</span><span class="src">§V-B</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig4.png" alt="系统级用法：prefill-decode 拆分和多层共享前缀缓存" loading="lazy"></button>
+    </figure>
+    <div class="fb">
+      <h3>(a) prefill 与 decode 分离：M 个 prefill，N 个 decode</h3>
+      <p>Router 分发 request 时同时告知它之后由哪个 decode 实例接手。prefill 这一侧的调度器自动插入逐层传输 KV 缓存的操作[[pd]]，耗时由网络拓扑和带宽决定。图中两边的设备可以不同（H100 和 A100），M 和 N 的比例可调，因此能比较“用什么硬件做哪个阶段、配多少台”。</p>
+    </div>
+    <div class="fb">
+      <h3>(b) 多层前缀缓存：显存、主机内存、CXL 内存池</h3>
+      <p>图中从里到外是三种配置范围。只用显存时每个 MSG 有自己的基数树缓存；加上主机内存，相同节点上的 MSG 共享第二层；启用 CXL 内存池后，所有 MSG 共用一个全局缓存[[prefix-tiers]]。缓存范围越大，命中机会越多，但命中在下层时需要搬运，这部分开销同样进入执行图。</p>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>实验的整体逻辑</h2>
+    <p>实验目的不同，要分开看。前三组检验这个工具准不准，最后一组用它预测没有实物的硬件。除非另有说明，负载是从 ShareGPT 抽取的 300 个 request，按每秒 10 个的泊松过程到达[[workload]]。</p>
+  </div>
+
+  <section class="panel">
+    <div class="tbl"><table>
+      <thead><tr><th>实验</th><th class="wrap">要回答的问题</th><th class="wrap">固定什么</th><th class="wrap">改变什么</th><th class="wrap">看什么指标</th><th>性质</th></tr></thead>
+      <tbody>
+        <tr><td>和 GPU 真机对比<small>Fig. 5、6、7</small></td><td class="wrap">模拟结果和真机对得上吗？</td><td class="wrap">负载、模型、硬件，两边相同</td><td class="wrap">GPU 型号、部署方式、并行度、缓存配置</td><td class="wrap">吞吐、延迟、功率、能耗、显存、命中率的误差</td><td>验证工具</td></tr>
+        <tr><td>和其他模拟器对比<small>Fig. 8</small></td><td class="wrap">比已有模拟器准吗？要多花多少时间？</td><td class="wrap">真实 vLLM 作基准</td><td class="wrap">模拟器、部署方式</td><td class="wrap">相对真机的 TPS、TTFT、TPOT，模拟耗时</td><td>比较工具</td></tr>
+        <tr><td>TPU 真机对比<small>Fig. 9</small></td><td class="wrap">换成非 GPU 的硬件也准吗？</td><td class="wrap">Llama 3.1-8B，负载和 GPU 实验相同</td><td class="wrap">硬件换成 TPU-v6e-1</td><td class="wrap">吞吐、TPOT、ITL 的误差</td><td>验证工具</td></tr>
+        <tr><td>PIM 假设分析<small>Fig. 10</small></td><td class="wrap">给 GPU 加 PIM 值得吗？</td><td class="wrap">Llama 3.1-8B，256 个 request</td><td class="wrap">GPU、GPU+PIM、GPU+PIM+SBI</td><td class="wrap">吞吐曲线、每 token 能耗</td><td>只有模拟，没有真机对照</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">验证</span><h2>吞吐和延迟：随时间的过程对得上吗</h2><span class="fn">Fig. 5</span><span class="src">§VII-A</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig5.png" alt="RTX A6000 和 H100 上真机与模拟器的吞吐曲线" loading="lazy"></button>
+    </figure>
+    <p>每张小图比较真实 vLLM 和模拟器在相同负载下每秒的吞吐。两行是两套 GPU：RTX A6000 上跑 Llama 3.1-8B 和 Phi-mini MoE，H100 上跑 Llama 3.1-70B 和 Mixtral 8×7B，后者张量并行度为 4。四列是四种部署：多个 dense 实例、单实例加前缀缓存、prefill 与 decode 分离、MoE。</p>
+    <p>结论是模拟器既能跟上过程，也能算准总量。逐时刻的吞吐误差在 RTX A6000 上是 5.14%，H100 上是 3.29%，论文归因于动态组批、到达波动和阶段切换[[ts-err]]。合计整段运行的吞吐和延迟后，误差降到 0.99% 和 1.54%[[agg-err]]。两组数字差几倍，本页的解释是逐时刻的偏差有正有负，合计时相互抵消。所以论文摘要的约 1% 代表总量，看某个时段的吞吐要按 3% 到 5% 估计。</p>
+    <p>曲线形状也和负载的设定吻合：300 个 request 按每秒 10 个到达，约 30 秒后不再有新 request，吞吐随后下降。RTX A6000 上的 MoE 明显更慢，跑到约 80 秒才结束，说明积压严重，这一格也是从图上看偏差最明显的。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">验证</span><h2>功率和能耗</h2><span class="fn">Fig. 6</span><span class="src">§VII-A</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig6.png" alt="RTX A6000 上的功率曲线与能耗分解" loading="lazy"></button>
+    </figure>
+    <p>这个实验要检验三状态功耗模型，所以负载特意做成脉冲：10 个 request 一组，每 60 秒发一次，共三次，中间留出空闲[[pulse]]。(a) 和 (b) 比较张量并行度 1 和 2 下的实测功率与模拟功率，总能耗平均误差 1.34%[[power-err]]。从图上估读，TP1 的三段功率约为 680、440、380 瓦，TP2 约为 930、510、400 瓦。TP2 多开一块 GPU，峰值更高，但执行更快，所以峰更窄。</p>
+    <p>(c) 是能耗分解。“其他”占比很大，是因为这台服务器有四块 GPU，没用到的都按恒定功率计入这一项[[others]]。图上估读，从 TP1 到 TP2，“其他”从约 30 kJ 降到约 22 kJ，GPU 从约 18 kJ 升到约 25 kJ，总能耗约 67 kJ 和 69 kJ，几乎不变。本页的理解是，多用一块卡时，它的能耗主要从“其他”转到了“GPU”一类。</p>
+    <p>要注意 (c) 只有模拟结果。真机对照的是总功率，各部件的比例没有逐项和实测比较，论文只说它和真实系统的规律一致。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">验证</span><h2>显存和前缀缓存命中率</h2><span class="fn">Fig. 7</span><span class="src">§VII-A</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig7.png" alt="单实例和多实例下的显存占用与前缀命中率" loading="lazy"></button>
+    </figure>
+    <p>吞吐对得上可能只是凑巧，这组实验检验模拟器内部的状态是否也和真机一致。负载是交替的突发和空闲，所以显存和命中率每 20 秒左右上一个台阶。</p>
+    <div class="fb">
+      <h3>(a) 单实例，只用显存缓存（vLLM 自带）</h3>
+      <p>显存从约 15 GB 涨到约 31 GB，命中率升到约 26%，平均误差 0.93%[[mem-single]]。起点的 15 GB 本页推断主要是模型权重，之后增加的是缓存下来的 KV。</p>
+    </div>
+    <div class="fb">
+      <h3>(b) 两个实例，共享主机内存缓存（LMCache）</h3>
+      <p>两个实例各有显存，共用一个主机内存池，这个池从 0 涨到约 13 GB。命中率分三条线画：两个实例各自的和共享层的。相同的突发在两个实例上引起的台阶高度不同，模拟器也跟上了这种差别，平均误差 0.41%[[mem-multi]]。这是验证跨实例共享缓存的直接证据。</p>
+    </div>
+    <p>这里的显存占用没有超过配置的 40 GB，从图上看不出回收发生过。所以这组实验覆盖了内存增长和命中，没有覆盖显存紧张时的回收行为。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">比较</span><h2>和其他模拟器比：准确度与耗时</h2><span class="fn">Fig. 8</span><span class="src">§VII-B</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig8.png" alt="与现有模拟器比较的准确度和模拟耗时" loading="lazy"></button>
+    </figure>
+    <h3 class="sub">(a) 准确度：相对真实 vLLM 的比值，1.00 表示完全一致</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>部署</th><th>指标</th><th class="r">TokenSim</th><th class="r">Vidur</th><th class="r">APEX</th><th class="r">LLMServingSim 2.0</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">单实例 dense</td><td>TPS</td><td class="r">0.70</td><td class="r">0.96</td><td class="r">1.00</td><td class="r"><b>0.99</b></td></tr>
+        <tr><td>TTFT</td><td class="r">5.2</td><td class="r">1.30</td><td class="r">0.83</td><td class="r"><b>0.93</b></td></tr>
+        <tr><td>TPOT</td><td class="r">7.2</td><td class="r">1.12</td><td class="r">1.15</td><td class="r"><b>1.01</b></td></tr>
+        <tr><td rowspan="3">多实例 dense</td><td>TPS</td><td class="r">0.75</td><td class="r">0.95</td><td class="r">1.02</td><td class="r"><b>0.98</b></td></tr>
+        <tr><td>TTFT</td><td class="r">3.3</td><td class="r">1.18</td><td class="r">0.74</td><td class="r"><b>0.94</b></td></tr>
+        <tr><td>TPOT</td><td class="r">6.7</td><td class="r">1.11</td><td class="r">0.99</td><td class="r"><b>1.02</b></td></tr>
+        <tr><td rowspan="3">prefill 与 decode 分离</td><td>TPS</td><td class="r">0.74</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r"><b>1.01</b></td></tr>
+        <tr><td>TTFT</td><td class="r">2.4</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r"><b>0.99</b></td></tr>
+        <tr><td>TPOT</td><td class="r">4.5</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r"><b>1.02</b></td></tr>
+        <tr><td rowspan="3">MoE</td><td>TPS</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r">1.14</td><td class="r"><b>1.04</b></td></tr>
+        <tr><td>TTFT</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r">0.47</td><td class="r"><b>0.90</b></td></tr>
+        <tr><td>TPOT</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r">0.69</td><td class="r"><b>1.01</b></td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">比值由本页从原图矢量文件的柱高换算，精确到约 0.01，超出坐标轴的 TokenSim 值取自图上标注。原图只给柱状图，没有数表。上一版 LLMServingSim 在 (a) 中没有画出柱子。比较只限于至少有一个其他模拟器能运行的配置[[unsupported]]，所以 2.0 独有的 PIM、多层缓存不在其中。</p>
+    <p>两个现象值得注意。第一，其他模拟器的准确度依赖指标：APEX 的 dense 吞吐很准，TTFT 却低了 17% 到 26%；到 MoE 上 TTFT 只有真值的 47%。2.0 则在所有指标上都接近 1，dense 部署的平均误差 2.43%[[cmp-dense]]，复杂部署 1.81%[[cmp-complex]]。第二，2.0 自身最弱的也是 TTFT，四种部署中分别偏低 7%、6%、1%、10%。TTFT 主要由排队和 prefill 决定，也是用户最容易感知的指标，用它评估排队策略时要留出这个余量。</p>
+    <h3 class="sub">(b) 模拟耗时</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>部署</th><th class="r">上一版</th><th class="r">TokenSim</th><th class="r">Vidur</th><th class="r">APEX</th><th class="r">LLMServingSim 2.0</th></tr></thead>
+      <tbody>
+        <tr><td>单实例 dense</td><td class="r">182164 s</td><td class="r">2.5 s</td><td class="r">485.3 s</td><td class="r">8.4 s</td><td class="r"><b>302.3 s</b></td></tr>
+        <tr><td>多实例 dense</td><td class="r muted">不支持</td><td class="r">2.8 s</td><td class="r">495.1 s</td><td class="r">7.2 s</td><td class="r"><b>633.2 s</b></td></tr>
+        <tr><td>prefill 与 decode 分离</td><td class="r muted">不支持</td><td class="r">2.8 s</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r"><b>478.2 s</b></td></tr>
+        <tr><td>MoE</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r muted">不支持</td><td class="r">27.1 s</td><td class="r"><b>316.9 s</b></td></tr>
+      </tbody>
+    </table></div>
+    <p>细节的代价是时间。2.0 比 TokenSim、APEX 慢一两个数量级，和 Vidur 相当，论文认为这是支持异构硬件和系统级交互必须付出的代价[[cmp-time]]。相对上一版的 182164 秒（约 50 小时），它快了约 600 倍。</p>
+    <p>摘要说的“约 10 分钟”还要和被模拟的时长对照。Fig. 5 的相同部署只运行 44 到 82 秒，按此估算模拟比真机慢约 4 到 14 倍（本页的估算，Fig. 8 没有写明对应哪套 GPU）。这个模拟器的价值在于不需要那台硬件，可以用 CPU 试很多配置，单次运行并不比真机快。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">验证</span><h2>换成 TPU</h2><span class="fn">Fig. 9</span><span class="src">§VII-C</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/llmservingsim/fig9.png" alt="TPU 真机与模拟器的吞吐和误差" loading="lazy"></button>
+    </figure>
+    <p>论文把它放在案例研究里，但它的作用仍是验证：用 TPU 专用的 profiler 测出算子模型，填入 TPU-v6e-1 的内存参数，再和真实的 vLLM-TPU 对比。负载和模型沿用 GPU 实验。目的是检验“换硬件只要换 profile”这个设计是否成立。</p>
+    <p>结果是逐时刻吞吐误差 3.95%[[tpu-err]]，和 GPU 的 3% 到 5% 相当。(b) 的三个全程指标几何平均 0.30%。这里没有列出 TTFT，而 Fig. 8 显示它是最难算准的指标。范围也有限：vLLM-TPU 只稳定支持单实例 dense，验证只能做到这个配置[[tpu-limit]]。论文提到可以继续用模拟器推测 TPU 上的前缀缓存和 prefill 与 decode 分离[[tpu-hypo]]，这部分属于没有对照的外推。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">小结</span><h2>这些误差数字各说明什么</h2><span class="src">§VII，本页汇总</span></div>
+    <div class="bars" data-lin="0,6" style="--lw:150px">
+      <div class="grp">逐时刻吞吐</div>
+      <div class="row"><span class="name">RTX A6000</span><div class="track"><div class="bar a" data-v="5.14"><i>5.14%</i></div></div></div>
+      <div class="row"><span class="name">TPU</span><div class="track"><div class="bar a" data-v="3.95"><i>3.95%</i></div></div></div>
+      <div class="row"><span class="name">H100</span><div class="track"><div class="bar a" data-v="3.29"><i>3.29%</i></div></div></div>
+      <div class="grp">和其他模拟器比时的三项指标</div>
+      <div class="row"><span class="name">dense 部署</span><div class="track"><div class="bar b" data-v="2.43"><i>2.43%</i></div></div></div>
+      <div class="row"><span class="name">分离与 MoE</span><div class="track"><div class="bar b" data-v="1.81"><i>1.81%</i></div></div></div>
+      <div class="grp">全程聚合</div>
+      <div class="row"><span class="name">H100 性能</span><div class="track"><div class="bar g" data-v="1.54"><i>1.54%</i></div></div></div>
+      <div class="row"><span class="name">总能耗</span><div class="track"><div class="bar g" data-v="1.34"><i>1.34%</i></div></div></div>
+      <div class="row"><span class="name">RTX A6000 性能</span><div class="track"><div class="bar g" data-v="0.99"><i>0.99%</i></div></div></div>
+      <div class="row"><span class="name">单实例显存与命中</span><div class="track"><div class="bar g" data-v="0.93"><i>0.93%</i></div></div></div>
+      <div class="row"><span class="name">多实例显存与命中</span><div class="track"><div class="bar g" data-v="0.41"><i>0.41%</i></div></div></div>
+      <div class="row"><span class="name">TPU 性能</span><div class="track"><div class="bar g" data-v="0.30"><i>0.30%</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="2">2%</span><span data-t="4">4%</span><span data-t="6">6%</span></div></div>
+    </div>
+    <p>摘要的 0.95% 没有写明算法。本页发现，把 GPU 上五个全程聚合数字（0.99、1.54、1.34、0.93、0.41）取几何平均，正好得到 0.95；取算术平均是 1.04。Fig. 8 的 2.43% 和 1.81% 也能用几何平均从 Fig. 8 的柱高精确算出，对应的算术平均约为 3.2% 和 3.1%。Fig. 9 的表更是直接写了 Geomean。以上是本页的推算。</p>
+    <p>几何平均会压低个别大误差的影响，比如 MoE 的 TTFT 偏低 10%。所以读这些数字时可以这样换算：比较方案的总体优劣，用约 1% 到 3% 的误差估计；看过程中的某一时段，用 3% 到 5%；看单项延迟指标，留出 10%。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">假设分析</span><h2>给 GPU 加 PIM 值得吗</h2><span class="fn">Fig. 10</span><span class="src">§VII-C</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/llmservingsim/fig10.png" alt="GPU、GPU+PIM、GPU+PIM+SBI 的吞吐和能耗" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>这是模拟器的目标用法：评估没有实物的硬件。三种系统都跑 Llama 3.1-8B 和单块 RTX A6000，只有内存不同。两个 PIM 系统把主内存换成 256 个通道、每通道 1 GB 的 HBM2。负载也按 PIM 定制：256 个 request，正好一个通道一个，每个输入 128、输出 512 token[[pim-setup]]。SBI 是 NeuPIMs 提出的子 batch 交替执行。</p>
+        <p>这个实验没有真机对照，图中数字全部是模拟结果。</p>
+      </div>
+    </div>
+    <div class="pair">
+      <div>
+        <h3>(a) 吞吐</h3>
+        <p>前 25 秒以 prefill 为主，收益有限，因为 PIM 主要加速 decode。prefill 结束后，GPU+PIM 的吞吐是 GPU 的 1.43 倍[[pim-gain]]。1.43 倍只是 decode 段的值：从图上估读，全部 request 完成的时间从约 53 秒缩短到约 46 秒，整体只快约 15%。输出更短的负载，收益还会更小，这是本页的推断。</p>
+        <p>SBI 反而和纯 GPU 差不多。它把 batch 切开，提高了硬件利用率，却让 GPU 实际看到的 batch 变小。只有持续维持 256 以上的超大 batch 时才有效，也就是 26 到 35 秒那段[[pim-sbi]]。</p>
+      </div>
+      <div>
+        <h3>(b) 能耗</h3>
+        <p>GPU+PIM 总能耗最低，每 token 能耗降低 14.8%[[pim-energy]]。原因在于跑得更快：恒定功率的部件（CPU、其他）随时间缩短而少耗能，内存能耗只略有增加。SBI 没有提速，多出的 PIM 又要耗能，所以比纯 GPU 还略高。</p>
+        <p>折线可以用总能耗验算：约 37 kJ 除以 256×512 = 131072 个输出 token，约 0.28 J，和图一致。这说明指标只数输出 token。</p>
+      </div>
+    </div>
+    <p>这个案例说明模拟器能揭示单看硬件参数看不到的结果：提高硬件利用率的 SBI 没有带来收益，因为它和组批发生了相互作用。不过 PIM 的结论依赖两点假设。负载是配合 PIM 选的（decode 占比高，request 数等于通道数），PIM 的算子数据也没有和实物对过。所以 1.43 倍和 14.8% 应读作“这个设定下的模拟结果”，不宜读作 PIM 的一般收益。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">关联</span><h2>它和 AgentServeSim 是什么关系</h2><span class="src">AgentServeSim §4</span></div>
+    <p><a class="plink as-t" href="#agentservesim">AgentServeSim</a> 建在 LLMServingSim 2.0 之上，直接使用它的组批、KV 内存管理、分布式执行和算子 profile[[as-build]]，再通过四个钩子接入 program 层：排队优先级、保留决定、回收保护和 KV 驻留状态[[as-hooks]]。两者的分界在模拟单位上。LLMServingSim 2.0 全文没有涉及智能体，负载是彼此独立的聊天 request。</p>
+    <div class="tbl"><table>
+      <thead><tr><th></th><th class="wrap">LLMServingSim 2.0</th><th class="wrap">AgentServeSim 增加的部分</th></tr></thead>
+      <tbody>
+        <tr><td>模拟单位</td><td class="wrap">request，彼此独立</td><td class="wrap">program，多个 turn 相互依赖</td></tr>
+        <tr><td>到达时间</td><td class="wrap">由负载配置给定</td><td class="wrap">下一个 turn 的到达由上一个的完成时刻算出</td></tr>
+        <tr><td>KV 缓存</td><td class="wrap">回收规则是配置项，服务于前缀缓存</td><td class="wrap">保留成为可编程策略，工具间隙也是决策点</td></tr>
+        <tr><td>关注的变量</td><td class="wrap">硬件组合、拆分部署</td><td class="wrap">保留、排队、路由策略</td></tr>
+        <tr><td>验证的硬件</td><td class="wrap">RTX A6000、H100、TPU</td><td class="wrap">B200、RTX PRO 6000（显存紧张）</td></tr>
+      </tbody>
+    </table></div>
+    <p>因此前者回答“换一种硬件或部署，服务性能会怎样”，后者回答“换一种策略，智能体的完成时间会怎样”。AgentServeSim 的显存紧张实验，刚好补上 Fig. 7 没有覆盖的回收场景。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>LLMServingSim 2.0 把服务决策和硬件行为放进一个循环：每轮按当前状态组 batch、放置算子、自动插入搬运和同步，再由改造过的 ASTRA-sim 算出耗时和资源，结果决定下一轮。硬件以算子级 profile 接入，因此可以覆盖 GPU、TPU，以及通过外部模拟器接入 PIM。</p>
+    <p>在 GPU 真机上，全程聚合的吞吐、延迟、显存和能耗误差都在 1.6% 以内，逐时刻吞吐误差 3% 到 5%。相比已有模拟器，它在更多部署上可以运行，且各项指标更均衡；代价是单次模拟要 5 到 10 分钟。它的主要贡献是提供一个公开的共同底座，<a class="plink as-t" href="#agentservesim">AgentServeSim</a> 就是一个现成的例子。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>支持的范围明显大于验证过的范围。Table I 里打勾的功能，有几项没有和真机对比过：Fig. 5 每一行只有一种 GPU，所以 Fig. 4(a) 中 H100 配 A100 的异构分离没有验证；CXL 内存池和注意力卸载只有模拟；TPU 只验证了单实例 dense；功耗和显存只在 RTX A6000 上对比过。异构恰恰是这篇论文的主打，在真机上却只能分别验证每种硬件。</p>
+    <p>负载也比较温和：300 个聊天 request，几十秒跑完，前缀命中率最高约 26%。长上下文、显存持续紧张、智能体这种高度重合的请求，都不在实验范围内。换到这些场景时，误差需要重新确认。此外，模拟器的精度建立在 profile 上，每增加一种模型和设备的组合都要重新 profile 一次；没有实物时，结果的可信度只能和外部硬件模拟器一样。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="abstract-gap"><blockquote lang="en">existing simulators lack the ability to jointly model heterogeneous hardware and disaggregated serving techniques within a unified, runtime-driven framework.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="abstract-loop"><blockquote lang="en">LLMServingSim 2.0 embeds serving decisions and hardware behavior into a single runtime loop, enabling interaction-aware modeling of batching, routing, placement, offloading, memory management, and power consumption.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="abstract-err"><blockquote lang="en">showing that it reproduces key performance, memory, and power metrics with an average error of 0.95%, while maintaining practical simulation times of around 10 minutes even for complex system configurations.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="isolation"><blockquote lang="en">Performance, efficiency, and scalability are no longer determined by hardware or software choices in isolation, but by how these choices interact at runtime, including their impact on scheduling decisions, memory behavior, and interconnect contention.</blockquote><p class="loc">第 I 节，第 1 页</p></li>
+      <li data-key="prefill-decode"><blockquote lang="en">As such, prefill stresses compute throughput, whereas decode is primarily constrained by memory bandwidth, capacity, and KV cache locality.</blockquote><p class="loc">第 II-A 节，第 2 页</p></li>
+      <li data-key="static"><blockquote lang="en">Static or operator-only performance models cannot capture such temporal effects, including shifting batch composition, locality-dependent KV cache behavior, heterogeneous-device cooperation, or routing imbalance.</blockquote><p class="loc">第 III-A 节，第 3 页</p></li>
+      <li data-key="hw-centric"><blockquote lang="en">However, their focus on static execution prevents them from capturing dynamic serving-time behaviors, such as request arrivals, batching evolution, and KV cache reuse, which are critical to end-to-end serving performance.</blockquote><p class="loc">第 III-B 节，第 3 页</p></li>
+      <li data-key="vidur"><blockquote lang="en">However, their modeling of memory management and heterogeneous deployments is limited, particularly for features that form the core of recent serving systems such as prefix caching and PD disaggregation.</blockquote><p class="loc">第 III-B 节，第 3 页</p></li>
+      <li data-key="tokensim"><blockquote lang="en">TokenSim [28] takes a step toward modeling serving dynamics, but its simplified memory abstraction restricts fidelity when studying KV placement, bandwidth contention, and migration.</blockquote><p class="loc">第 III-B 节，第 3 页</p></li>
+      <li data-key="ls1"><blockquote lang="en">Finally, LLMServingSim [25] focuses on collecting runtime statistics in a single-instance setting, but it is not designed to study multi-instance or heterogeneous setups, nor serving features such as MoE behavior, prefix caching, or PD disaggregation.</blockquote><p class="loc">第 III-B 节，第 3 页</p></li>
+      <li data-key="profile"><blockquote lang="en">A one-time profiling pass measures operator-level latency and power using only a single decode block per model-device pair, typically completing within 2.1 hours (e.g., Llama 3.1-70B on NVIDIA H100).</blockquote><p class="loc">第 IV-A 节，第 3 页</p></li>
+      <li data-key="ext-profile"><blockquote lang="en">In addition to real-hardware profiling, LLMServingSim 2.0 can ingest operator-level profiles from external hardware simulators, enabling the evaluation of future accelerators such as PIM without requiring physical hardware.</blockquote><p class="loc">第 IV-A 节，第 3 页</p></li>
+      <li data-key="loop"><blockquote lang="en">The loop repeats until all requests are complete, producing both online runtime statistics and final serving performance.</blockquote><p class="loc">第 IV-A 节，第 4 页</p></li>
+      <li data-key="iter"><blockquote lang="en">The System Simulator then evaluates the graph while modeling communication, contention, multi-tier memory accesses, and integrated power/energy, and returns the results to advance the next iteration.</blockquote><p class="loc">附录 E，第 13 页</p></li>
+      <li data-key="msg-unit"><blockquote lang="en">A Model Serving Group (MSG) is a logical execution unit responsible for serving one LLM instance.</blockquote><p class="loc">第 IV-C 节，第 4 页</p></li>
+      <li data-key="batch"><blockquote lang="en">The memory model is consulted to determine whether the candidate batch fits within available resources, including prefix-cache residency and eviction cost.</blockquote><p class="loc">第 IV-C 节，第 4 页</p></li>
+      <li data-key="eviction"><blockquote lang="en">During batch scheduling, KV cache eviction and promotion decisions are derived based on per-device memory capacity and cache residency, and the corresponding load and store overheads are injected into the execution graph.</blockquote><p class="loc">第 IV-C 节，第 4 页</p></li>
+      <li data-key="power-7"><blockquote lang="en">Accelerator power is modeled using a three-state model comprising idle, active, and standby states to capture utilization-dependent behavior.</blockquote><p class="loc">第 IV-C 节，第 4 页</p></li>
+      <li data-key="power-dram"><blockquote lang="en">DRAM and interconnect links consume energy proportional to the volume of data transferred, while the remaining components are modeled with constant power.</blockquote><p class="loc">第 IV-C 节，第 4 页</p></li>
+      <li data-key="astra"><blockquote lang="en">Those existing frameworks, originally designed for simple and repetitive training patterns, are insufficient for modeling dynamic LLM inference serving.</blockquote><p class="loc">第 IV-D 节，第 5 页</p></li>
+      <li data-key="pim-ops"><blockquote lang="en">Furthermore, we add PIM operations beyond memory load and store primitives, enabling system-level simulation of PIM-accelerated execution.</blockquote><p class="loc">第 IV-D 节，第 5 页</p></li>
+      <li data-key="attn"><blockquote lang="en">For attention-offloading, this involves transferring intermediate activations and KV caches from GPUs to PIM before execution and returning the results to GPUs afterward.</blockquote><p class="loc">第 V-A 节，第 5 页</p></li>
+      <li data-key="moe-router"><blockquote lang="en">Each MSG instantiates a configurable Expert Router that emulates gating behavior and determines expert assignment on a per-token basis.</blockquote><p class="loc">第 V-A 节，第 5 页</p></li>
+      <li data-key="moe-graph"><blockquote lang="en">The operation scheduler automatically translates expert loading and cross-device communication into an execution graph, without requiring explicit user specification.</blockquote><p class="loc">第 V-A 节，第 5 页</p></li>
+      <li data-key="pd"><blockquote lang="en">The prefill MSG operation scheduler then automatically inserts layer-wise KV cache transfer operations to the decode MSG, constructing the corresponding execution graph.</blockquote><p class="loc">第 V-B 节，第 6 页</p></li>
+      <li data-key="prefix-tiers"><blockquote lang="en">When a CXL memory pool is enabled, all MSGs access a single globally shared prefix cache across the system.</blockquote><p class="loc">第 V-B 节，第 6 页</p></li>
+      <li data-key="workload"><blockquote lang="en">Unless otherwise specified, all workloads used in evaluations are generated by sampling 300 requests from ShareGPT [59], with request arrivals synthesized using a Poisson process at a rate of 10 requests per second.</blockquote><p class="loc">第 VI 节，第 6 页</p></li>
+      <li data-key="unsupported"><blockquote lang="en">Because these baselines do not support all serving features modeled in LLMServingSim 2.0, we limit the comparison to configurations and workloads that are executable by at least one baseline simulator.</blockquote><p class="loc">第 VI 节，第 6 页</p></li>
+      <li data-key="ts-err"><blockquote lang="en">On a time-series basis, the average throughput error is 5.14% on RTX A6000 and 3.29% on H100, reflecting runtime variability from dynamic batching, request arrivals, and execution phase transitions.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="agg-err"><blockquote lang="en">When performance metrics are aggregated over the full execution, including both throughput and latency, the average error drops to 0.99% and 1.54% for RTX A6000 and H100, respectively.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="pulse"><blockquote lang="en">Idle gaps are intentionally inserted between pulses to exercise the three-state accelerator power model in LLMServingSim 2.0, which alternates among idle, active, and standby states.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="power-err"><blockquote lang="en">As shown in Fig. 6(a) and (b), LLMServingSim 2.0 closely matches the measured power consumption of the RTX A6000 system under both tensor parallelism configurations, with an average error of 1.34% in total energy consumption.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="others"><blockquote lang="en">The others category is relatively large because unused GPUs in the RTX A6000 server, which contains four GPUs in total, are modeled as constant power consumers.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="mem-single"><blockquote lang="en">In this setting, LLMServingSim 2.0 closely matches the real system in both memory usage and prefix cache hit rate, with an average error of 0.93%, capturing the step-wise growth in device memory footprint and the corresponding increase in prefix reuse as requests accumulate.</blockquote><p class="loc">第 VII-A 节，第 7 页</p></li>
+      <li data-key="mem-multi"><blockquote lang="en">LLMServingSim 2.0 reproduces these behaviors with an average error of 0.41%, accurately capturing per-instance memory growth and synchronized increases in prefix cache hit rate over time.</blockquote><p class="loc">第 VII-A 节，第 7 至 8 页</p></li>
+      <li data-key="cmp-dense"><blockquote lang="en">Across single- and multi-instance dense serving configurations, LLMServingSim 2.0 achieves high accuracy across all metrics, with an average error of 2.43%.</blockquote><p class="loc">第 VII-B 节，第 8 页</p></li>
+      <li data-key="cmp-complex"><blockquote lang="en">In contrast, LLMServingSim 2.0 remains accurate across all supported metrics, achieving an average error of 1.81%, demonstrating its ability to jointly model serving dynamics and memory behavior under complex serving configurations.</blockquote><p class="loc">第 VII-B 节，第 8 页</p></li>
+      <li data-key="cmp-time"><blockquote lang="en">This overhead is an inherent trade-off of LLMServingSim 2.0’s design goal: supporting heterogeneous accelerator types and hardware combinations while accurately capturing system-level interactions.</blockquote><p class="loc">第 VII-B 节，第 8 页</p></li>
+      <li data-key="tpu-limit"><blockquote lang="en">As the current vLLM-TPU framework stably supports only single-instance dense serving, our validation is limited to this configuration.</blockquote><p class="loc">第 VII-C 节，第 8 页</p></li>
+      <li data-key="tpu-err"><blockquote lang="en">Despite architectural differences between GPUs and TPUs, LLMServingSim 2.0 closely tracks the real system, with an average per-timestep throughput error of 3.95%.</blockquote><p class="loc">第 VII-C 节，第 8 页</p></li>
+      <li data-key="tpu-hypo"><blockquote lang="en">Moreover, LLMServingSim 2.0 enables hypothetical analysis of serving techniques not yet supported by current TPU frameworks, such as PD disaggregation and prefix caching, allowing early exploration of their system-level impact.</blockquote><p class="loc">第 VII-C 节，第 9 页</p></li>
+      <li data-key="pim-setup"><blockquote lang="en">To reflect this behavior, we use a workload of 256 requests, matching the number of PIM channels, with input and output of 128 and 512 tokens.</blockquote><p class="loc">第 VII-C 节，第 9 页</p></li>
+      <li data-key="pim-gain"><blockquote lang="en">After prefill completes, GPU+PIM achieves 1.43× higher throughput than the GPU-only system, demonstrating the effectiveness of PIM for decode workloads.</blockquote><p class="loc">第 VII-C 节，第 9 页</p></li>
+      <li data-key="pim-sbi"><blockquote lang="en">As a result, SBI is effective only when very large batch sizes (≥256) are sustained, as observed during the 26–35 s interval.</blockquote><p class="loc">第 VII-C 节，第 9 页</p></li>
+      <li data-key="pim-energy"><blockquote lang="en">In contrast, GPU+PIM completes requests faster and achieves the lowest energy consumption, reducing J per token by 14.8%.</blockquote><p class="loc">第 VII-C 节，第 9 页</p></li>
+      <li data-key="as-build"><blockquote lang="en">We build AgentServeSim on LLMServingSim 2.0 [Cho et al., 2026] because it already models the request-level mechanisms orthogonal to our contribution, including batching, KV memory management, distributed execution, and profile-based operator timing.</blockquote><p class="loc">AgentServeSim 论文第 4 节，第 5 页</p></li>
+      <li data-key="as-hooks"><blockquote lang="en">We connect the program layer to LLMServingSim 2.0 and its ASTRA-Sim backend [Won et al., 2023] through four hooks: scheduling priority, retention decisions, victim protection, and KV residency.</blockquote><p class="loc">AgentServeSim 论文第 4 节，第 5 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

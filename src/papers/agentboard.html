@@ -1,0 +1,427 @@
+<article class="view frame paper" id="view-agentboard" data-paper="agentboard" hidden>
+
+<header class="masthead">
+  <h1 lang="en">AgentBoard: An Analytical Evaluation Board of Multi-turn LLM Agents</h1>
+  <p class="zh">AgentBoard：多轮 LLM 智能体的分析式评测板</p>
+  <p class="by">Chang Ma、Junlei Zhang、Zhihao Zhu、Cheng Yang、Yujiu Yang、Yaohui Jin、Zhenzhong Lan、Lingpeng Kong、Junxian He，香港大学、浙江大学、上海交通大学、清华大学、西湖大学、香港科技大学</p>
+  <div class="meta">
+    <span class="venue">NeurIPS 2024 数据集与基准赛道</span>
+    <div class="crumb"><span>深度学习</span><span>自然语言处理</span><span>大模型评测</span><span>智能体基准</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2></div>
+    <div class="tree">
+      <div>深度学习，自然语言处理</div>
+      <div style="--d:1">大语言模型的能力评测：MMLU、GSM8K、HumanEval</div>
+      <div style="--d:2">把大模型当智能体来评测：AgentBench、GAIA、MINT</div>
+      <div style="--d:3" class="on"><b>多轮交互、部分可观测、按步计分：AgentBoard</b></div>
+    </div>
+    <p>MMLU、GSM8K 这类基准一次给出完整题目，模型一次作答，测的是知识和单步推理。智能体评测关心的是另一种能力：在一个会对动作作出反应的环境里连续做几十个决定，边做边收集信息，记住已经知道的事，发现走错后改正。这种能力只有在多轮交互中才会暴露出来，单轮问答测不到。</p>
+    <p>AgentBoard 的贡献在测量方法上，它没有训练新模型。它提供一个基准（4 类场景、9 种任务、1013 个测试样本[[envs]]），一个在每一步都给分的进度指标，以及一套把运行记录拆开分析的开源工具。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2></div>
+    <dl class="defs">
+      <dt>LLM 智能体</dt><dd>大模型读入环境的文字描述，输出一个文字动作（例如 <code>open fridge 1</code>），环境执行后用文字返回结果，循环往复直到完成任务或用完步数。</dd>
+      <dt>多轮交互</dt><dd>一个样本需要多次“观察、行动”的往返。每一步的决定会改变后续能看到的信息，早期的错误会累积。</dd>
+      <dt>部分可观测</dt><dd>智能体一开始看不到全部状态，比如不知道哪个柜子里有鸡蛋，必须主动去看[[po]]。这迫使它探索并记住探索结果。</dd>
+      <dt>POMDP</dt><dd>部分可观测马尔可夫决策过程，是上面这种交互的数学写法[[pomdp]]：给定目标 g，智能体根据目标和历史观察选动作，环境转移到新状态并返回新的观察。读懂后文不需要它的公式。</dd>
+      <dt>成功率</dt><dd>在限定步数内完整达成目标的样本比例，每个样本只有 0 和 1 两种结果。</dd>
+      <dt>进度率</dt><dd>本文提出的指标，每一步给出 0 到 1 之间的分数，表示到这一步为止离目标有多近。</dd>
+      <dt>Grounding</dt><dd>把想法落实成环境能执行的动作。grounding 准确率是模型输出的动作中合法动作所占的比例[[grounding-def]]，反映模型是否守格式、是否用对动作名。</dd>
+      <dt>Act 与 ReAct</dt><dd>两种提示方式。Act 只让模型输出动作；ReAct 让模型先写一段推理再输出动作，推理文字会进入后续的上下文。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、方案、验证、发现</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>现有基准要么任务种类单一，要么大部分是单轮题，要么信息一开始就全给了[[obstacle]]。而且几乎都只报最终成功率[[sr-only]]，在难任务上大家都接近 0，比不出高下[[zero-sr]]。</p></div>
+      <div class="step key"><h3>方案</h3><p>挑选并改造 9 种需要多轮、大多部分可观测的纯文本任务；给每个样本标注子目标或匹配规则；每一步计算进度率，取历史最高值[[pr-def]]。</p></div>
+      <div class="step"><h3>验证</h3><p>8 种任务各 60 条运行记录，由 4 人在不看自动分数的情况下打分。进度率和人工分的相关系数在所有任务上都超过 0.95[[human]]。</p></div>
+      <div class="step"><h3>发现</h3><p>GPT-4 平均进度率 70.0%，大幅领先[[gpt4]]。能否持续多轮推进是强弱分水岭[[finding-multiturn]]，而这依赖 grounding、世界知识和自我纠错等基础能力[[finding-basic]]。</p></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">方案</span><h2>AgentBoard、九个环境、1013 个环境是什么关系</h2><span class="fn">Table 14</span><span class="src">§3.1</span></div>
+    <div class="chain">
+      <div class="node hot"><b>AgentBoard</b><small>一套基准，加一套分析工具</small></div><span class="arr">→</span>
+      <div class="node"><b>4 类场景</b><small>具身、游戏、网页、工具</small></div><span class="arr">→</span>
+      <div class="node"><b>9 种任务</b><small>论文又称 9 environments</small></div><span class="arr">→</span>
+      <div class="node"><b>1013 个样本</b><small>论文又称 1013 environments，下表“样本数”一行相加</small></div><span class="arr">→</span>
+      <div class="node"><b>每个样本运行一次</b><small>产生一条 trajectory 和分数</small></div>
+    </div>
+    <p>是的，九个“环境”就是 AgentBoard 的九种任务。容易混淆的原因是论文把 environment 用在了两个层级上：“nine diverse environments across four scenarios”指九种任务[[nine-env]]，“1013 exemplary environments”和 Table 14 的 “# Environment” 指具体样本[[envs]]。本页统一把前者称为任务，后者称为样本。一种任务规定世界的规则和可用的动作，一个样本再指定具体目标和初始状态，比如 AlfWorld 这种任务下的一个样本是“把洗干净的鸡蛋放进微波炉”。评测一个模型时，它要逐个跑完这 1013 个样本，每种任务得到一个分数，九种任务再求平均。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>场景</th><th>任务</th><th>智能体要做什么</th><th class="r">样本数</th><th class="r"># Turns</th><th class="r">动作种类</th><th class="r">平均子目标</th><th class="r">难题门槛</th><th class="r">上下文 token</th><th>进度算法</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">具身</td><td>AlfWorld</td><td class="wrap">在虚拟房屋里做家务：put a clean egg in microwave</td><td class="r">134</td><td class="r">6</td><td class="r">13</td><td class="r">3</td><td class="r">3</td><td class="r">900</td><td>subgoal</td></tr>
+        <tr><td>ScienceWorld</td><td class="wrap">在虚拟学校做科学实验：measure the melting point of the orange juice</td><td class="r">90</td><td class="r">15</td><td class="r">21</td><td class="r">5</td><td class="r">3</td><td class="r">2800</td><td>subgoal</td></tr>
+        <tr><td>BabyAI</td><td class="wrap">在 20×20 网格里走动并操作物体：pickup a red ball</td><td class="r">112</td><td class="r">10</td><td class="r">8</td><td class="r">4</td><td class="r">3</td><td class="r">1800</td><td>subgoal</td></tr>
+        <tr><td rowspan="2">游戏</td><td>Jericho</td><td class="wrap">文字冒险游戏，靠探索了解虚构世界的规则</td><td class="r">20</td><td class="r">20</td><td class="r">150</td><td class="r">6</td><td class="r">4</td><td class="r">1500</td><td>subgoal</td></tr>
+        <tr><td>PDDL</td><td class="wrap">规划游戏：搬球、调酒、搭积木、换轮胎</td><td class="r">60</td><td class="r">20</td><td class="r">8</td><td class="r">6</td><td class="r">6</td><td class="r">2700</td><td>match</td></tr>
+        <tr><td rowspan="2">网页</td><td>WebShop</td><td class="wrap">在模拟电商网站按要求搜索并买下商品</td><td class="r">251</td><td class="r">3</td><td class="r">2</td><td class="r">4</td><td class="r">1</td><td class="r">1200</td><td>match</td></tr>
+        <tr><td>WebArena</td><td class="wrap">在真实网页应用上操作：列出某仓库带 question 标签的 issue</td><td class="r">245</td><td class="r">25</td><td class="r">12</td><td class="r">6</td><td class="r">4</td><td class="r">15000</td><td>match</td></tr>
+        <tr><td rowspan="2">工具</td><td>Tool-Query</td><td class="wrap">调用函数查询天气、电影、学术数据库</td><td class="r">60</td><td class="r">5</td><td class="r">15</td><td class="r">5</td><td class="r">4</td><td class="r">2100</td><td>subgoal</td></tr>
+        <tr><td>Tool-Operation</td><td class="wrap">调用函数修改待办清单和 Google 表格</td><td class="r">40</td><td class="r">6</td><td class="r">16</td><td class="r">5</td><td class="r">4</td><td class="r">4300</td><td>subgoal、match</td></tr>
+      </tbody>
+    </table></div>
+    <dl class="defs">
+      <dt>样本数</dt><dd>这种任务下有多少个不同的目标和初始状态，原表的 # Environment。</dd>
+      <dt># Turns</dt><dd>原表注没有定义。它不是步数上限，因为实验最多允许 30 轮交互[[turns-30]]。从取值看，它更接近完成一个样本通常需要的轮数，这是本页的推断。</dd>
+      <dt>动作种类</dt><dd>原表的 Action Space，动作模板的数量。WebShop 只有 search 和 click 两种，Jericho 有 150 种。</dd>
+      <dt>平均子目标</dt><dd>一个样本平均要完成几个里程碑。没有子目标的任务，这里是目标状态要满足的条件数。</dd>
+      <dt>难题门槛</dt><dd>子目标数超过这个值的样本算难题[[hard-cutoff]]，后面“易题与难题”的分组由它决定。</dd>
+      <dt>上下文 token</dt><dd>提示的长度，用 Llama2 分词器统计。WebArena 的网页结构很长，约 15000 token，对上下文较短的模型压力最大。</dd>
+      <dt>进度算法</dt><dd>subgoal 数已完成的子目标，match 比较当前状态和目标状态的相似度，下一个面板解释两者的区别。</dd>
+    </dl>
+    <p>九种任务大多来自已有研究，改造围绕三件事：统一成纯文字的输入输出，让所有文本模型都能参评，比如 BabyAI 原本是图像观察和数字动作；补齐或重标子目标，比如 ScienceWorld 原有子目标稀疏且权重不均；改进报错信息，让模型犯错后有机会纠正，比如 WebShop 越界和点错对象时的反馈。另有两处修补具体漏洞。Jericho 原游戏要 50 到 300 步，超出模型的上下文能力，于是改写目标，限制在 15 个子目标内[[jericho]]。Tool-Query 的问题刻意设计成凭记忆答不出来，即使答案碰巧正确，没有查库也判错[[tq]]。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">问题</span><h2>现有基准缺什么</h2><span class="fn">Table 1</span></div>
+    <p>Table 1 用五个问题比较七个基准。前三列问“出的题够不够像真实的智能体任务”，这决定基准能测到什么能力；后两列问“评分和分析够不够细”，这决定测完能得到多少信息。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>列（原文）</th><th class="wrap">这一列在问什么</th><th class="wrap">打 ✔ 的样子</th><th class="wrap">打 ✗ 的样子</th></tr></thead>
+      <tbody>
+        <tr><td>任务多样<small>Task Diversity</small></td><td class="wrap">题目是否覆盖多种不同场景？</td><td class="wrap">同时有家务、游戏、网页、工具调用</td><td class="wrap">只考一类，比如只有问答，或只有 API 调用</td></tr>
+        <tr><td>多轮交互<small>Multi-round Interaction</small></td><td class="wrap">是否必须和环境来回多次才能做完？</td><td class="wrap">打开冰箱才知道里面有什么，下一步依赖这一步的结果</td><td class="wrap">读完题一次作答，就能决定分数</td></tr>
+        <tr><td>部分可观测<small>Partially-Observable Environments</small></td><td class="wrap">开始时是否缺少完成任务所需的信息？</td><td class="wrap">不知道鸡蛋放在哪，要自己去找</td><td class="wrap">题目文字已包含全部条件，比如一道数学应用题</td></tr>
+        <tr><td>进度指标<small>Fine-grained Progress Metrics</small></td><td class="wrap">没做完时能否拿到部分分数？</td><td class="wrap">四步走了三步记 0.75</td><td class="wrap">只有成功和失败，走了三步与一步没走都记 0</td></tr>
+        <tr><td>分析评测<small>Analytical Evaluation</small></td><td class="wrap">除总分外，能否看出失分在哪？</td><td class="wrap">可以按难度、步数、子能力拆开，可以查看运行记录</td><td class="wrap">只给一张总分表</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl"><table>
+      <thead>
+        <tr><th rowspan="2">基准</th><th rowspan="2" class="wrap">它主要测什么</th><th class="g" colspan="3">出的题</th><th class="g" colspan="2">评分和分析</th></tr>
+        <tr><th class="c gl">任务多样</th><th class="c">多轮</th><th class="c">部分可观测</th><th class="c gl">进度指标</th><th class="c">分析评测</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>AgentBench</td><td class="wrap">操作系统、数据库、游戏、网页等多种环境</td><td class="y gl">✔</td><td class="x">✗<small>含多轮任务，但拉开模型差距的主要是单轮任务[[ab-single]]</small></td><td class="y">✔</td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr><td>GAIA</td><td class="wrap">需要查资料、用工具才能回答的问题</td><td class="x gl">✗<small>只有问答[[gaia-qa]]</small></td><td class="y">✔</td><td class="y">✔</td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr><td>MINT</td><td class="wrap">把传统题改造成可多轮交互的形式</td><td class="y gl">✔</td><td class="y">✔</td><td class="x">✗<small>多由 HumanEval、GSM8K 改造，信息一开始就完整[[mint-fo]]</small></td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr><td>API-Bank</td><td class="wrap">调用 API 完成请求</td><td class="x gl">✗<small>只有工具调用</small></td><td class="y">✔</td><td class="y">✔</td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr><td>ToolEval</td><td class="wrap">调用真实 API 完成任务</td><td class="x gl">✗<small>只有工具调用</small></td><td class="y">✔</td><td class="y">✔</td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr><td>LLM-Eval</td><td class="wrap">对话质量的多维度自动评分</td><td class="y gl">✔</td><td class="x">✗</td><td class="x">✗</td><td class="x gl">✗</td><td class="x">✗</td></tr>
+        <tr class="me"><td>AgentBoard</td><td class="wrap">4 类场景、9 种任务</td><td class="y gl">✔</td><td class="y">✔</td><td class="y">✔</td><td class="y gl">✔</td><td class="y">✔</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">“它主要测什么”一列是对这些基准的简介，来自它们各自的论文，Table 1 本身不含这一列。打勾情况和小字注释来自 Table 1 及其表注；API-Bank、ToolEval 的“只有工具调用”是本页根据“focus on a specific type of task”的归纳。</p>
+    <p>竖着看，前三列每个已有基准都至少缺一项；后两列所有已有基准都打叉，这两项是 AgentBoard 新加的。缺口的后果可以从相关性上看出来：AgentBench 的分数和知识测验 MMLU 高度相关，AgentBoard 的分数则和推理、代码基准相关[[vs-agentbench]]。前者很大程度上在测模型知道多少，后者在测模型能否一步步把事做成。</p>
+    <p>只看成功率还有一个问题：它把“走完四步中的三步”和“一步没走”都记为失败[[near-complete]]。对弱模型来说，几乎所有样本都失败，成功率只剩下噪声；对研究者来说，看不到模型是卡在第一步还是倒在最后一步，也就无从改进。这正是后两列要解决的问题。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">方案</span><h2>整体构成</h2><span class="fn">Figure 1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentboard/fig1.png" alt="AgentBoard 总览图" loading="lazy"></button>
+    </figure>
+    <p>下排是评测对象：左边是四类场景下的九种任务；中间和右边是一个走迷宫的样本，智能体只看得到身边一小块，说“往前走”，环境回答“前面没路”，这一步的进度率是 0.25。上排是评测完成后得到的分析视图：成功率和进度率并排的柱状图、进度率随步数变化的曲线、六项子能力的雷达图、排行榜。这些视图由开源工具自动生成，放在 Weights &amp; Biases 网页面板上，对应 Table 1 最后两列。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">方法</span><h2>所有模型用相同的智能体写法</h2><span class="fn">Figure 2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentboard/fig2.png" alt="反射式智能体结构与提示词示例" loading="lazy"></button>
+    </figure>
+    <p>评测要比较的是模型，如果给不同模型配上复杂程度不同的规划、反思或记忆模块，分数差异就分不清来自模型还是来自框架。所以全部采用图左的简单结构：模型拿到目标、当前观察和之前的全部观察与动作，生成下一个动作；提示词如图右，只要求输出动作（Act[[act-only]]），外加一个示范例子。历史超过上下文长度时只保留最近若干轮[[sliding]]，交互得以进行到步数上限，上下文较短的模型不会因提前终止而被额外扣分。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">方法</span><h2>进度率怎么算</h2><span class="src">§2.2</span></div>
+    <p>进度率要解决的问题是：样本没做完时，怎样给出一个能比较的部分分。不同任务的状态形式不同，所以有两种算法，二者都输出 0 到 1 的分数，最后都取历史最大值。</p>
+    <div class="pair">
+      <div class="hot">
+        <h3>subgoal：数里程碑（AlfWorld 等）</h3>
+        <p>中间状态难以直接和目标比较的任务用这种算法。人工把目标拆成 K 个有先后顺序的子目标，每个子目标对应环境文字里的一段可检查内容，用正则表达式判断是否达成[[regex]]。分数等于已达成子目标的比例。</p>
+        <div class="formula">r<sub>t</sub> = max<sub>0≤i≤t</sub> ( 1/K × Σ<sub>k</sub> f(s<sub>i</sub>, g<sub>k</sub>) )，f ∈ {0, 1}</div>
+      </div>
+      <div class="hot">
+        <h3>match：比较当前状态和目标状态（PDDL 等）</h3>
+        <p>状态可以逐项比较的任务用这种算法。比如目标是“a 在 b 上，b 在桌上”，当前是“a 在桌上，b 在桌上”，两个条件满足一个，匹配分 0.5[[pddl-match]]。表格操作按单元格比较，网页任务按网址和页面内容比较。</p>
+        <div class="formula">r<sub>t</sub> = max<sub>0≤i≤t</sub> f(s<sub>i</sub>, g)，f ∈ [0, 1]</div>
+      </div>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>把洗干净的鸡蛋放进微波炉[[egg]]</th><th class="c">打开冰箱</th><th class="c">拿出鸡蛋</th><th class="c">清洗鸡蛋</th><th class="c">放进微波炉</th></tr></thead>
+      <tbody>
+        <tr><td>做到这一步时的进度率</td><td class="c n">0.25</td><td class="c n">0.50</td><td class="c n">0.75</td><td class="c n">1.00</td></tr>
+        <tr><td>做到这一步时的成功率</td><td class="c n">0</td><td class="c n">0</td><td class="c n">0</td><td class="c n">1</td></tr>
+      </tbody>
+    </table></div>
+    <p>上表就是这个指标相对成功率多出来的信息。取最大值的用意在于容忍探索：智能体经常要走回头路，比如为了找东西离开厨房，这时当前状态和目标的距离会暂时变远，直接用当前状态打分会惩罚探索。取最大值记录的是“最远推进到了哪里”。代价是分数不会下降，智能体后来破坏了已完成的部分也看不出来。</p>
+    <p>为了让子目标标得出来，每个目标只允许对应一种子目标顺序，约 5% 的原题因此被改写。这个约束只限制里程碑的顺序，绕路完成同样能拿满分[[detour]]。它也意味着进度率最适合目标明确、路径相对固定的任务。页面末尾的附录用一个完整样本演示了这个计算过程。</p>
+  </section>
+
+  <div class="band">
+    <h2>验证实验：进度率可信吗</h2>
+    <p>进度率是人为定义的分数，只有它和人对“做到哪了”的判断一致，才能拿它比较模型。后面所有结果都以此为前提。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">验证</span><h2>进度率与人工判断是否一致</h2><span class="fn">Figure 3</span><span class="src">§3.2</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentboard/fig3.png" alt="八种任务上进度率与人工评估的散点" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>做法是请 4 位标注者阅读运行记录和任务描述，在看不到自动分数的情况下给出进度（0%、25%、50%、75%、100% 五档），再和进度率比较。每种任务取 60 条记录，来自 GPT-4、GPT-3.5-Turbo、DeepSeek-67b 三个模型。</p>
+        <p>图中每个点是一条记录，横轴是 4 人打分的平均，纵轴是进度率。结果是相关系数 ρ 在所有任务上都不低于 0.95，点基本贴着对角线。κ 衡量 4 位标注者彼此的一致程度，在 0.73 到 0.91 之间，说明人工分本身是稳定的参照。结论是进度率可以代表人对进度的判断。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>主实验：比较模型，并定位差在哪里</h2>
+    <p>19 个模型跑完全部 1013 个样本。变化的只有模型；提示模板、示范例子、贪心解码和温度 0 对所有模型相同[[greedy]]，所以分数差异可以归因于模型。下面每个面板从一个角度拆解结果。</p>
+  </div>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">实验</span><h2>被测模型</h2></div>
+    <dl class="defs">
+      <dt>闭源 7 个</dt><dd>GPT-4、Claude2、Gemini1.5-Flash、Claude3-Haiku、GPT-3.5-Turbo、GPT-3.5-Turbo-16k、Text-Davinci-003</dd>
+      <dt>开放 10 个</dt><dd>Llama3-70b 和 8b、DeepSeek-67b、Llama2-70b 和 13b、CodeLlama-34b 和 13b、Lemur-70b、Mistral-7b、Vicuna-13b-16k</dd>
+      <dt>智能体微调 2 个</dt><dd>xLAM-70b、AgentLM-70b</dd>
+    </dl>
+    <p>名单里有几组可以直接对照的模型：不同规模（Llama2-13b 与 70b），基座与代码版本（Llama2 与 CodeLlama、Lemur），基座与智能体数据微调版本（Llama2-70b 与 AgentLM-70b）。后面关于训练数据的结论来自这些对照。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">结果</span><h2>进度率比成功率多看出什么</h2><span class="fn">Table 3</span></div>
+    <div class="bars" data-lin="0,30" style="--lw:90px">
+      <div class="legend"><span><i class="sw a"></i>平均进度率</span><span><i class="sw b"></i>平均成功率</span></div>
+      <div class="row"><span class="name">Mistral-7b</span><div class="track"><div class="bar a tall" data-v="24.6"><i>24.6</i></div><div class="bar b tall" data-v="3.9"><i>3.9</i></div></div></div>
+      <div class="row"><span class="name">Llama2-13b</span><div class="track"><div class="bar a tall" data-v="18.9"><i>18.9</i></div><div class="bar b tall" data-v="2.1"><i>2.1</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="10">10</span><span data-t="20">20</span><span data-t="30">30%</span></div></div>
+    </div>
+    <p>两个小模型几乎所有样本都失败，单看成功率比不出高下；进度率相差 5.7 个百分点[[llama-mistral]]。进度率也更不容易被个别习惯干扰：CodeLlama-34b 在工具任务里常常做完了事却忘记输出 finish 动作，成功率因此低于更小的 CodeLlama-13b，进度率却更高[[finish]]。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">结果</span><h2>易题与难题</h2><span class="fn">Table 5</span></div>
+    <div class="dumb" data-lin="0,100" style="--lw:96px">
+      <div class="legend"><span><i class="sw" style="background:var(--pa);border-radius:50%"></i>易题进度率</span><span><i class="sw" style="border:2px solid var(--pa);border-radius:50%"></i>难题进度率</span></div>
+      <div class="row"><span class="name">GPT-4</span><div class="line" data-e="79.2" data-h="62.7"></div></div>
+      <div class="row"><span class="name">GPT-3.5-Turbo</span><div class="line" data-e="47.2" data-h="34.7"></div></div>
+      <div class="row"><span class="name">Llama3-70b</span><div class="line" data-e="46.6" data-h="34.4"></div></div>
+      <div class="row"><span class="name">DeepSeek-67b</span><div class="line" data-e="43.1" data-h="32.2"></div></div>
+      <div class="row"><span class="name">Llama2-70b</span><div class="line" data-e="26.2" data-h="19.3"></div></div>
+      <div class="row"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="25">25</span><span data-t="50">50</span><span data-t="75">75</span><span data-t="100">100</span></div></div>
+    </div>
+    <p>所有模型在难题上都明显下降[[hard]]。成功率跌得更厉害：GPT-4 从 65.6% 掉到 34.4%。这符合组合效应：若每个子目标独立地以概率 p 完成，全部完成的概率是 p 的 K 次方，K 变大时成功率成倍下降，进度率只按比例下降。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>总榜：九种任务的平均分</h2><span class="fn">Table 3</span></div>
+    <div class="bars" data-lin="0,80" style="--lw:118px">
+      <div class="legend"><span><i class="sw a"></i>进度率 %</span><span><i class="sw b"></i>成功率 %</span></div>
+      <div class="row"><span class="name">GPT-4</span><div class="track"><div class="bar a" data-v="70.0"><i>70.0</i></div><div class="bar b" data-v="47.9"><i>47.9</i></div></div></div>
+      <div class="row"><span class="name">Claude2</span><div class="track"><div class="bar a" data-v="48.9"><i>48.9</i></div><div class="bar b" data-v="26.2"><i>26.2</i></div></div></div>
+      <div class="row"><span class="name">Gemini1.5-Flash</span><div class="track"><div class="bar a" data-v="43.5"><i>43.5</i></div><div class="bar b" data-v="20.6"><i>20.6</i></div></div></div>
+      <div class="row"><span class="name">Claude3-Haiku</span><div class="track"><div class="bar a" data-v="43.3"><i>43.3</i></div><div class="bar b" data-v="17.6"><i>17.6</i></div></div></div>
+      <div class="row"><span class="name">Llama3-70b</span><div class="track"><div class="bar a" data-v="41.9"><i>41.9</i></div><div class="bar b" data-v="20.2"><i>20.2</i></div></div></div>
+      <div class="row"><span class="name">GPT-3.5-Turbo</span><div class="track"><div class="bar a" data-v="41.4"><i>41.4</i></div><div class="bar b" data-v="19.7"><i>19.7</i></div></div></div>
+      <div class="row"><span class="name">xLAM-70b</span><div class="track"><div class="bar a" data-v="40.2"><i>40.2</i></div><div class="bar b" data-v="20.4"><i>20.4</i></div></div></div>
+      <div class="row"><span class="name">DeepSeek-67b</span><div class="track"><div class="bar a" data-v="38.5"><i>38.5</i></div><div class="bar b" data-v="17.2"><i>17.2</i></div></div></div>
+      <div class="row"><span class="name">Text-Davinci-003</span><div class="track"><div class="bar a" data-v="37.2"><i>37.2</i></div><div class="bar b" data-v="16.2"><i>16.2</i></div></div></div>
+      <div class="row"><span class="name">GPT-3.5-Turbo-16k</span><div class="track"><div class="bar a" data-v="34.2"><i>34.2</i></div><div class="bar b" data-v="13.6"><i>13.6</i></div></div></div>
+      <div class="row"><span class="name">AgentLM-70b</span><div class="track"><div class="bar a" data-v="33.3"><i>33.3</i></div><div class="bar b" data-v="14.7"><i>14.7</i></div></div></div>
+      <div class="row"><span class="name">Lemur-70b</span><div class="track"><div class="bar a" data-v="30.8"><i>30.8</i></div><div class="bar b" data-v="8.3"><i>8.3</i></div></div></div>
+      <div class="row"><span class="name">CodeLlama-34b</span><div class="track"><div class="bar a" data-v="30.0"><i>30.0</i></div><div class="bar b" data-v="7.6"><i>7.6</i></div></div></div>
+      <div class="row"><span class="name">Llama3-8b</span><div class="track"><div class="bar a" data-v="30.0"><i>30.0</i></div><div class="bar b" data-v="6.2"><i>6.2</i></div></div></div>
+      <div class="row"><span class="name">CodeLlama-13b</span><div class="track"><div class="bar a" data-v="25.8"><i>25.8</i></div><div class="bar b" data-v="10.0"><i>10.0</i></div></div></div>
+      <div class="row"><span class="name">Mistral-7b</span><div class="track"><div class="bar a" data-v="24.6"><i>24.6</i></div><div class="bar b" data-v="3.9"><i>3.9</i></div></div></div>
+      <div class="row"><span class="name">Llama2-70b</span><div class="track"><div class="bar a" data-v="23.8"><i>23.8</i></div><div class="bar b" data-v="4.5"><i>4.5</i></div></div></div>
+      <div class="row"><span class="name">Vicuna-13b-16k</span><div class="track"><div class="bar a" data-v="23.1"><i>23.1</i></div><div class="bar b" data-v="4.3"><i>4.3</i></div></div></div>
+      <div class="row"><span class="name">Llama2-13b</span><div class="track"><div class="bar a" data-v="18.9"><i>18.9</i></div><div class="bar b" data-v="2.1"><i>2.1</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="20">20</span><span data-t="40">40</span><span data-t="60">60</span><span data-t="80">80</span></div></div>
+    </div>
+    <p>GPT-4 以 70.0% 的平均进度率领先第二名 Claude2 二十多个百分点[[gpt4]]；开放模型中 Llama3-70b 和 DeepSeek-67b 最好，已经接近 GPT-3.5-Turbo。</p>
+    <p>更值得看的是两个数的比例。进度率衡量走了多远，成功率衡量是否走到终点，后者占前者的比例越小，模型越常在半路停下。GPT-4 的这个比例约七成，排在后面的模型只有一到两成：它们能完成前几个子目标，却无法把一长串动作连贯地做完。这种多轮能力的差距在单轮基准上看不出来。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>额外训练带来多少提升</h2><span class="src">由 Table 3 相减得到</span></div>
+    <div class="bars" data-lin="0,12" style="--lw:190px">
+      <div class="legend"><span class="muted">相对 Llama2-70b 多出的平均进度率（百分点）</span></div>
+      <div class="row"><span class="name">AgentLM-70b，智能体数据微调</span><div class="track"><div class="bar a tall" data-v="9.5"><i>+9.5</i></div></div></div>
+      <div class="row"><span class="name">Lemur-70b，代码续训</span><div class="track"><div class="bar a tall" data-v="7.0"><i>+7.0</i></div></div></div>
+      <div class="row"><span class="name">CodeLlama-34b，代码模型</span><div class="track"><div class="bar a tall" data-v="6.2"><i>+6.2</i></div></div></div>
+      <div class="row"><span class="name">CodeLlama-13b，代码模型</span><div class="track"><div class="bar a tall" data-v="2.0"><i>+2.0</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="4">4</span><span data-t="8">8</span><span data-t="12">12</span></div></div>
+    </div>
+    <p>这几个模型都源自 Llama2 或与它规模相当，差别主要在训练数据，所以可以把增量归因于数据。参数量只有五分之一的 CodeLlama-13b 也超过了 Llama2-70b，代码数据的作用大于参数规模的差距。提升并不局限于需要写函数调用的工具任务，在考验规划的游戏任务上同样明显[[code]]。一种合理的解释是，代码本身就是“按顺序执行、跟踪状态变化、满足前置条件”的文本，和智能体任务所需的推理方式相近。</p>
+    <p>用智能体运行记录微调的收益最大：AgentLM-70b 比基座进度率高 9.5、成功率高 10.2 个百分点。它的训练数据只来自 AlfWorld 和 WebShop，在其他七种任务上也有明显提升[[agentlm]]，学到的是一般的交互习惯，而非两种任务的特定解法。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><h2>模型说出的动作有多少是合法的</h2><span class="fn">Table 4</span><span class="src">节选</span></div>
+    <div class="tbl heat"><table>
+      <thead><tr><th>模型</th><th class="r">ALF</th><th class="r">SW</th><th class="r">BA</th><th class="r">JC</th><th class="r">PL</th><th class="r">WS</th><th class="r">WA</th><th class="r">TQ</th><th class="r">TO</th><th class="r">平均</th></tr></thead>
+      <tbody>
+        <tr><td>GPT-4</td><td class="h" style="--v:82.6">82.6</td><td class="h" style="--v:22.8">22.8</td><td class="h" style="--v:80.3">80.3</td><td class="h" style="--v:100">100</td><td class="h" style="--v:93">93.0</td><td class="h" style="--v:98.3">98.3</td><td class="h" style="--v:97.6">97.6</td><td class="h" style="--v:97.5">97.5</td><td class="h" style="--v:98.5">98.5</td><td class="h" style="--v:85.6"><b>85.6</b></td></tr>
+        <tr><td>GPT-3.5-Turbo-16k</td><td class="h" style="--v:57.4">57.4</td><td class="h" style="--v:9.2">9.2</td><td class="h" style="--v:73.3">73.3</td><td class="h" style="--v:100">100</td><td class="h" style="--v:77.6">77.6</td><td class="h" style="--v:96.6">96.6</td><td class="h" style="--v:81.3">81.3</td><td class="h" style="--v:98">98.0</td><td class="h" style="--v:92.2">92.2</td><td class="h" style="--v:76.2"><b>76.2</b></td></tr>
+        <tr><td>GPT-3.5-Turbo</td><td class="h" style="--v:59.2">59.2</td><td class="h" style="--v:18.7">18.7</td><td class="h" style="--v:62.4">62.4</td><td class="h" style="--v:99.8">99.8</td><td class="h" style="--v:66">66.0</td><td class="h" style="--v:90.2">90.2</td><td class="h" style="--v:91.3">91.3</td><td class="h" style="--v:97.7">97.7</td><td class="h" style="--v:91.8">91.8</td><td class="h" style="--v:75.2"><b>75.2</b></td></tr>
+        <tr><td>Vicuna-13b-16k</td><td class="h" style="--v:17.2">17.2</td><td class="h" style="--v:24.1">24.1</td><td class="h" style="--v:74.5">74.5</td><td class="h" style="--v:100">100</td><td class="h" style="--v:59.2">59.2</td><td class="h" style="--v:94.1">94.1</td><td class="h" style="--v:58.7">58.7</td><td class="h" style="--v:97.9">97.9</td><td class="h" style="--v:92.2">92.2</td><td class="h" style="--v:68.7"><b>68.7</b></td></tr>
+        <tr><td>DeepSeek-67b</td><td class="h" style="--v:43.6">43.6</td><td class="h" style="--v:12.6">12.6</td><td class="h" style="--v:65.4">65.4</td><td class="h" style="--v:99.8">99.8</td><td class="h" style="--v:62.7">62.7</td><td class="h" style="--v:95.4">95.4</td><td class="h" style="--v:55.7">55.7</td><td class="h" style="--v:93.1">93.1</td><td class="h" style="--v:80.5">80.5</td><td class="h" style="--v:67.6"><b>67.6</b></td></tr>
+        <tr><td>Text-Davinci-003</td><td class="h" style="--v:27.3">27.3</td><td class="h" style="--v:17.2">17.2</td><td class="h" style="--v:15.9">15.9</td><td class="h" style="--v:97.9">97.9</td><td class="h" style="--v:72.6">72.6</td><td class="h" style="--v:97.4">97.4</td><td class="h" style="--v:23.7">23.7</td><td class="h" style="--v:95.2">95.2</td><td class="h" style="--v:82.5">82.5</td><td class="h" style="--v:58.9"><b>58.9</b></td></tr>
+        <tr><td>Mistral-7b</td><td class="h" style="--v:12.1">12.1</td><td class="h" style="--v:7.9">7.9</td><td class="h" style="--v:33.9">33.9</td><td class="h" style="--v:96.2">96.2</td><td class="h" style="--v:18.1">18.1</td><td class="h" style="--v:83.5">83.5</td><td class="h" style="--v:37.5">37.5</td><td class="h" style="--v:69.7">69.7</td><td class="h" style="--v:35.1">35.1</td><td class="h" style="--v:43.8"><b>43.8</b></td></tr>
+      </tbody>
+    </table></div>
+    <p>单位是百分比，指模型输出的动作中环境能执行的比例。列名是九种任务的缩写（ALF AlfWorld，SW ScienceWorld，BA BabyAI，JC Jericho，PL PDDL，WS WebShop，WA WebArena，TQ Tool-Query，TO Tool-Operation）。ScienceWorld 一列连 GPT-4 也只有 22.8%，模型在这里频繁说出不被接受的命令；Jericho 的动作种类多达 150 种，合法比例却接近 100%，可见合法与否取决于环境对动作写法的要求，和动作种类多少关系不大。</p>
+    <p>grounding 和总榜成绩并不一一对应，说对动作格式和做出正确决策是两种能力。Text-Davinci-003 平均只有 58.9%，总榜成绩却与 GPT-3.5-Turbo 相当，它在工具使用上吃亏，在规划上占优[[davinci]]。Vicuna-13b-16k 正好相反，grounding 与 DeepSeek-67b 相当，总榜却排在倒数。指令微调可以教会模型守格式，但不一定让它更会做事[[grounding]]。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><h2>走到第几步还在进步</h2><span class="fn">Figure 4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentboard/fig4.png" alt="进度率随交互步数变化" loading="lazy"></button>
+    </figure>
+    <p>四个小图各是一种任务，横轴是交互到第几步，纵轴是此时的进度率。这张图回答模型能否持续推进。GPT-4 和 Claude2 在 AlfWorld、PDDL 上一直涨到第 30 步，在 WebArena 和工具任务上较早变平，这可能是因为这些任务的后半段更难。开放模型的曲线普遍在第 6 步左右就平了，只有 Llama3-70b 和 DeepSeek-67b 例外[[longrange]]。步数增加后，模型要从越来越长的历史里找出有用信息，较弱的模型在这个阶段停止了有效推进，这和总榜中成功率远低于进度率是相同的问题。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结果</span><h2>差在哪项能力</h2><span class="fn">Figure 5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentboard/fig5.png" alt="闭源与开放模型的子能力雷达图" loading="lazy"></button>
+    </figure>
+    <p>每种任务按考察重点映射到六项子能力，子能力得分由相关任务的成绩汇总得到。六项分别是：记忆（利用很早之前的信息）、规划（把目标拆成子目标）、世界建模（具备完成任务所需的知识）、自我反思（根据环境反馈调整）、grounding（说出合法动作）、空间导航（高效走到目标位置）。左图是闭源模型，右图是开放模型，注意两图刻度不同（外圈分别是 50 和 20）。</p>
+    <p>GPT-4 在每个方向上都最大[[subskill]]，它的领先是全面的。开放模型不仅分数低，形状也更不规则，各有明显短板。任何一项基础能力薄弱，都会在需要它的任务里拖累整体表现。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">工具</span><h2>分析面板怎么用</h2><span class="fn">Figure 6</span><span class="src">§5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentboard/fig6.png" alt="WandB 可视化面板" loading="lazy"></button>
+    </figure>
+    <p>典型用法是从上半部分的汇总板找出表现最差的任务，进入下半部分的任务看板确认是在难题上掉分还是在某一步停滞，再打开失败的运行记录看具体发生了什么。论文的案例：GPT-4 在 Jericho 上分数最低，难题下降明显；打开 zenon 这个样本的记录，发现它打开了牢门却没能引开守卫，最终没逃出去[[zenon]]，根源是没有先在房间里寻找可用的道具。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">附加实验</span><h2>评测框架的设计选择是否合理</h2><span class="fn">Table 9</span><span class="src">附录 E、F</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>GPT-3.5-Turbo，进度率 / 成功率</th><th class="r">Act</th><th class="r">ReAct</th></tr></thead>
+      <tbody>
+        <tr><td>AlfWorld</td><td class="r">35.6 / 17.2</td><td class="r">37.9 / 8.2</td></tr>
+        <tr><td>PDDL</td><td class="r">25.0 / 5.0</td><td class="r">17.1 / 3.3</td></tr>
+        <tr><td>Tool-Query</td><td class="r">69.4 / 45.0</td><td class="r">70.0 / 50.0</td></tr>
+        <tr><td>Tool-Operation</td><td class="r">37.2 / 7.5</td><td class="r">54.8 / 10.0</td></tr>
+      </tbody>
+    </table></div>
+    <p>这组实验检验“统一用 Act”是否吃亏。结果是先写推理再行动的 ReAct 没有稳定地胜过只输出动作的 Act[[react]]：工具任务上略好，AlfWorld 的成功率和 PDDL 反而下降。一种解释是交互最长 30 轮，推理文字会更快填满上下文，挤掉更早的观察。长历史的处理方式也做了对比，只保留最近记录好于“上下文满了就停止”，也比“让模型总结历史”更稳定。</p>
+    <p>探索行为的统计显示，多数模型访问过的房间、容器和地点数量达不到完成任务的最低要求[[explore]]。部分可观测任务里，信息不足往往比推理错误更致命。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>GPT-4 在所有任务和所有子能力上都领先，开放模型中 Llama3 和 DeepSeek LLM 最好。强弱智能体的分界线在于能否在多轮交互中持续推进，大多数开放模型在几步之后就停滞[[finding-multiturn]]。持续推进的能力建立在 grounding、世界知识和根据反馈自我纠正等基础能力之上[[finding-basic]]。代码数据和智能体交互数据都能在不增加参数的情况下明显改善这些能力。</p>
+    <p>方法上，进度率让评测在成功率接近零的区间仍然有分辨率，难易分组、按步曲线和子能力拆解把一个总分变成了可以定位问题的诊断信息。具体名次会随新模型过时，这套测法的价值更持久。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>进度率依赖人工标注的子目标[[limit]]。任务越复杂，标注的人力成本越高；用大模型自动标注是自然的方向，但当时的模型在这些任务上表现不佳，标注不可靠。评测全部在模拟环境中进行，是为了保证结果可复现；真实网站内容随时变化，在真实环境中操作也有安全风险，这两点都还没有解决。</p>
+    <p>统一的 Act 写法让比较公平，但分数反映的是模型自身的能力，不代表配上更好的规划、记忆或反思模块后能达到的水平，排行榜应理解为基础能力排名。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">附录</span><h2>举例：一个 AlfWorld 样本从头到尾发生了什么</h2><span class="src">Table 2、Figure 10、Figure 11、附录 L.2</span></div>
+    <p>这个例子把前面的概念串起来：样本是什么，模型收到什么，环境返回什么，分数怎么变。目标、子目标、提示结构和动作语法来自论文。论文只公开了这个样本的第 2 步（下表绿色行），其余步骤是本页按相同语法补全的示意，观察文字和那次错误动作都不是真实记录。</p>
+    <h3 class="sub">第一步：模型收到的提示</h3>
+    <pre class="code"><b>System Prompt</b>  You are a helpful assistant. Generate your next step of action after Action. Action must not be empty.
+<b>Instruction</b>    Your task is to interact with a virtual household simulator to accomplish a specific task. ...
+               Here are the available actions you can take:
+               take obj from recep / put obj in/on recep / open recep / close recep / clean obj using recep / go to recep / ...
+<b>Examples</b>       一段完整的示范，内容是 look at statue under the desklamp 这类同类型样本的交互过程
+<b>Goal</b>           put a clean egg in microwave
+<b>Trajectory</b>     到目前为止的全部 Action 和 Observation，每一步之后变长一段</pre>
+    <p>五部分的结构对所有任务相同（Figure 10），具体内容随任务变化[[prompt-5]]。标注者事先为这个样本定好 4 个子目标：打开冰箱、拿出鸡蛋、清洗鸡蛋、放进微波炉。前 3 个用正则表达式匹配环境返回的文字，比如 <code>You pick up the pencil +.</code> 能匹配 “You pick up the pencil 1”[[alf-regex]]；最后 1 个直接使用环境发出的任务成功标志[[alf-flag]]。</p>
+    <h3 class="sub">第二步：模型和环境一轮轮交互</h3>
+    <div class="tbl"><table>
+      <thead><tr><th class="r">步</th><th>模型输出的动作</th><th class="wrap">环境返回的观察</th><th>达成子目标</th><th class="r">进度率</th><th class="r">成功率</th></tr></thead>
+      <tbody>
+        <tr><td class="r">1</td><td><code>go to fridge 1</code></td><td class="wrap">The fridge 1 is closed.</td><td>无</td><td class="r n">0.00</td><td class="r n">0</td></tr>
+        <tr class="real"><td class="r">2</td><td><code>open fridge 1</code></td><td class="wrap">You open the fridge 1. The fridge 1 is open. In it, you see a apple 2, a egg 1, a lettuce 1, a pan 2, a plate 1, and a tomato 1.[[alf-step]]</td><td>打开冰箱</td><td class="r n">0.25</td><td class="r n">0</td></tr>
+        <tr><td class="r">3</td><td><code>take egg 1 from fridge 1</code></td><td class="wrap">You pick up the egg 1 from the fridge 1.</td><td>拿出鸡蛋</td><td class="r n">0.50</td><td class="r n">0</td></tr>
+        <tr><td class="r">4</td><td><code>go to sinkbasin 1</code></td><td class="wrap">On the sinkbasin 1, you see nothing.</td><td>无</td><td class="r n">0.50</td><td class="r n">0</td></tr>
+        <tr class="err"><td class="r">5</td><td><code>wash egg 1</code></td><td class="wrap">报错：这个动作不在可用动作中[[env-error]]</td><td>无</td><td class="r n">0.50</td><td class="r n">0</td></tr>
+        <tr><td class="r">6</td><td><code>clean egg 1 using sinkbasin 1</code></td><td class="wrap">You clean the egg 1 using the sinkbasin 1.</td><td>清洗鸡蛋</td><td class="r n">0.75</td><td class="r n">0</td></tr>
+        <tr><td class="r">7</td><td><code>go to microwave 1</code></td><td class="wrap">The microwave 1 is closed.</td><td>无</td><td class="r n">0.75</td><td class="r n">0</td></tr>
+        <tr><td class="r">8</td><td><code>open microwave 1</code></td><td class="wrap">You open the microwave 1. The microwave 1 is open. In it, you see nothing.</td><td>无</td><td class="r n">0.75</td><td class="r n">0</td></tr>
+        <tr><td class="r">9</td><td><code>put egg 1 in/on microwave 1</code></td><td class="wrap">You put the egg 1 in/on the microwave 1.</td><td>放进微波炉，发出成功标志</td><td class="r n">1.00</td><td class="r n">1</td></tr>
+      </tbody>
+    </table></div>
+    <p>这张表展示了三件事。第 1 步智能体看不到冰箱里有什么，第 2 步打开后才知道，这就是部分可观测。第 4、7、8 步是必要的移动和开门，它们不对应子目标，进度率保持不变但也不会被扣分。第 5 步模型说了一个语法不对的动作，环境报错，模型得以在第 6 步改正。</p>
+    <h3 class="sub">第三步：这个样本得到什么分数</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>情况</th><th class="r">进度率</th><th class="r">成功率</th><th class="r">grounding 准确率</th></tr></thead>
+      <tbody>
+        <tr class="me"><td>如上完整走完</td><td class="r n">1.00</td><td class="r n">1</td><td class="r n">8/9 = 89%</td></tr>
+        <tr><td>假设第 5 步之后一直在重复错误动作，直到步数用完</td><td class="r n">0.50</td><td class="r n">0</td><td class="r n">随错误次数下降</td></tr>
+      </tbody>
+    </table></div>
+    <p>第二种情况下成功率和“一步都没走”相同，都是 0；进度率给出 0.50，说明模型走完了一半。把 134 个样本的分数平均，就是 Table 3 里这个模型在 AlfWorld 一列的成绩，比如 GPT-4 的 65.5/43.3 表示平均进度率 65.5%、成功率 43.3%。其他任务的流程相同，差别在动作和计分方式。比如 PDDL 的 Blocksworld 没有子目标，进度率是目标条件中已满足的比例；工具任务的动作是带参数的函数调用，比如表格操作的 <code>update_cell_by_formula</code>[[to-step]]。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="obstacle"><blockquote lang="en">A primary obstacle is the benchmarking of agent performance across diverse scenarios within a unified framework, especially in maintaining partially-observable environments and ensuring multi-round interactions.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="sr-only"><blockquote lang="en">Moreover, current evaluation frameworks mostly focus on the final success rate, revealing few insights during the process and failing to provide a deep understanding of the model abilities.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="po"><blockquote lang="en">Furthermore, evaluating agents in partially-observable environments, where they must actively explore to understand their surroundings, is essential for practical assessments.</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="zero-sr"><blockquote lang="en">This simplified evaluation is particularly inadequate in challenging environments where most models demonstrate nearly zero success rates, consequently blurring finer distinctions and obscuring underlying mechanisms (Liu et al., 2023a).</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="envs"><blockquote lang="en">AGENTBOARD encompasses a diverse set of 9 unique tasks and 1013 exemplary environments, covering a range from embodied AI and game agents to web and tool agents.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="finding-multiturn"><blockquote lang="en">(2) Strong LLM agents are characterized by their capability for multi-turn interaction with the environment, an ability that is notably lacking in most open-weight models</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="finding-basic"><blockquote lang="en">(3) Emergent agentic abilities are strongly dependent on basic abilities like grounding, world modeling, and self-reflection.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="vs-agentbench"><blockquote lang="en">the results on AGENTBOARD well-correlates with the scores on traditional reasoning and coding benchmarks, while the AgentBench scores strongly correlated with scores on the knowledge test MMLU</blockquote><p class="loc">第 2 节，第 3 页</p></li>
+      <li data-key="pomdp"><blockquote lang="en">Interaction with these environments can be modeled as a special case of Partially Observable Markov Decision Processes (POMDPs)</blockquote><p class="loc">第 2.1 节，第 3 页</p></li>
+      <li data-key="act-only"><blockquote lang="en">The implementation of the reflex agent assessed in this paper adopts an act-only prompting strategy</blockquote><p class="loc">第 2.1 节，第 4 页</p></li>
+      <li data-key="sliding"><blockquote lang="en">Following the “sliding window” method from LangChain (Chase, 2022), we focus on recent, more impactful interactions (Puterman, 1990) within context constraints.</blockquote><p class="loc">第 2.1 节，第 4 页</p></li>
+      <li data-key="near-complete"><blockquote lang="en">This approach does not differentiate between near-complete tasks and minimal task execution, treating both as equivalent failures.</blockquote><p class="loc">第 2.2 节，第 4 页</p></li>
+      <li data-key="pr-def"><blockquote lang="en">The progress rate r<sub>t</sub> reflects the highest matching score achieved, reaching 1 when the task is completed.</blockquote><p class="loc">第 2.2 节，第 5 页</p></li>
+      <li data-key="regex"><blockquote lang="en">To evaluate the match between an agent state and a subgoal, we employ a regular-expression-based matching function</blockquote><p class="loc">第 2.2 节，第 5 页</p></li>
+      <li data-key="egg"><blockquote lang="en">As an example, for task “clean an egg and put it in microwave", the necessary subgoals would be “open the fridge" →“taking an egg from the fridge" →“clean the egg with sinkbasin" →“put the egg in the microwave".</blockquote><p class="loc">第 2.2 节，第 5 页</p></li>
+      <li data-key="detour"><blockquote lang="en">Note that while we maintain a unique subgoal sequence, this allows for a diverse set of trajectories, e.g. taking detours when accomplishing the task.</blockquote><p class="loc">第 2.2 节，第 5 页</p></li>
+      <li data-key="jericho"><blockquote lang="en">Therefore we rewrite the goal of each adventure to restrict the games to be finished within 15 subgoals.</blockquote><p class="loc">第 3.1 节，第 5 页</p></li>
+      <li data-key="tq"><blockquote lang="en">we only consider an answer correct if the model follows the appropriate trajectory to access the databases.</blockquote><p class="loc">第 3.1 节，第 6 页</p></li>
+      <li data-key="human"><blockquote lang="en">Results show that progress rate highly correlates with human assessment on the progress where the Pearson correlation exceeds 0.95 on all tasks, and substantial agreement is reached among the annotators.</blockquote><p class="loc">第 3.2 节，第 6 页</p></li>
+      <li data-key="llama-mistral"><blockquote lang="en">For example, Llama2-13b and Mistral-7b exhibit similarly negligible success rates (2.1% and 3.9%, respectively), but their progress rates differ significantly: 18.9% for Llama2-13b and 24.6% for Mistral-7b.</blockquote><p class="loc">第 4.2 节，第 7 页</p></li>
+      <li data-key="finish"><blockquote lang="en">an agent like CodeLlama-34b often fails to generate the action “finish” when performing tool-using tasks, leading to a higher progress rate and lower success rate compared to CodeLlama-13b.</blockquote><p class="loc">第 4.2 节，第 7 页</p></li>
+      <li data-key="gpt4"><blockquote lang="en">GPT-4 significantly surpasses other LLMs, achieving an average progress rate of 70.0%, followed by Claude and Gemini.</blockquote><p class="loc">第 4.2 节，第 7 页</p></li>
+      <li data-key="code"><blockquote lang="en">This indicates that training on code data could enhance general agentic capabilities beyond code generation.</blockquote><p class="loc">第 4.2 节，第 8 页</p></li>
+      <li data-key="agentlm"><blockquote lang="en">Despite AgentLM-70b was trained on trajectories from AlfWorld and WebShop, it also demonstrated significant improvement on other tasks.</blockquote><p class="loc">第 4.2 节，第 8 页</p></li>
+      <li data-key="davinci"><blockquote lang="en">This suggests that while the model struggles with tool utilization, it excels in planning and other sub-skills.</blockquote><p class="loc">第 4.3 节，第 8 页</p></li>
+      <li data-key="grounding"><blockquote lang="en">While tuning improves models’ ability to follow instructions, it doesn’t necessarily boost overall performance.</blockquote><p class="loc">第 4.3 节，第 8 页</p></li>
+      <li data-key="hard"><blockquote lang="en">Unsurprisingly, all models show a significant performance drop on hard examples, consistent with Dziri et al. (2023)’s findings that even robust LLMs like GPT-4 struggle with task compositionality.</blockquote><p class="loc">第 4.3 节，第 9 页</p></li>
+      <li data-key="longrange"><blockquote lang="en">Open-weight models, except Llama3-70b and Deepseek-67b, peak early and generally stop progressing after about 6 steps, likely struggling with the increased complexity of long-range interactions and extended context requirements.</blockquote><p class="loc">第 4.3 节，第 9 页</p></li>
+      <li data-key="subskill"><blockquote lang="en">As depicted in Figure 5, GPT-4 surpasses all other LLMs across all sub-skills.</blockquote><p class="loc">第 4.3 节，第 9 页</p></li>
+      <li data-key="zenon"><blockquote lang="en">in the “zenon” sub-task, the agent successfully unlocks the cell door but fails to distract the guards, resulting in an inability to escape.</blockquote><p class="loc">第 5 节，第 9 页</p></li>
+      <li data-key="limit"><blockquote lang="en">Limitations of AGENTBOARD include reliance on human-annotated subgoals to calculate progress rate.</blockquote><p class="loc">第 7 节，第 10 页</p></li>
+      <li data-key="explore"><blockquote lang="en">Most models are unable to explore the minimum number of locations necessary to complete the goal.</blockquote><p class="loc">附录 E，第 15 页</p></li>
+      <li data-key="react"><blockquote lang="en">our experiments on GPT-3.5-Turbo show inconsistent improvement of ReAct over performance of Act, as shown in Table 9.</blockquote><p class="loc">附录 F，第 16 页</p></li>
+      <li data-key="greedy"><blockquote lang="en">We use greedy decoding strategy and set temperature to zero for better replicacy</blockquote><p class="loc">附录 I.1，第 16 页</p></li>
+      <li data-key="nine-env"><blockquote lang="en">we carefully curate nine diverse environments across four scenarios</blockquote><p class="loc">第 2 节，第 3 页</p></li>
+      <li data-key="turns-30"><blockquote lang="en">We hypothesized that this is due to we test long-term interactions of LLM Agents up to 30 interactions</blockquote><p class="loc">附录 F，第 16 页</p></li>
+      <li data-key="hard-cutoff"><blockquote lang="en">We divide problems into hard/easy based on the number of subgoals – problems with a larger number of subgoals than cutoff are viewed as hard.</blockquote><p class="loc">Table 14 表注，第 19 页</p></li>
+      <li data-key="grounding-def"><blockquote lang="en">Table 4 reports grounding accuracy, the percentage of valid actions.</blockquote><p class="loc">第 4.3 节，第 8 页</p></li>
+      <li data-key="ab-single"><blockquote lang="en">Notably, AgentBench entails both single and multi-round tasks, with mainly the former differentiating open-sourced models.</blockquote><p class="loc">Table 1 表注，第 3 页</p></li>
+      <li data-key="gaia-qa"><blockquote lang="en">The GAIA benchmark focuses solely on question answering tasks.</blockquote><p class="loc">Table 1 表注，第 3 页</p></li>
+      <li data-key="mint-fo"><blockquote lang="en">MINT benchmark primarily includes fully-observable environments tasks derived from conventional evaluations such as HumanEval and GSM8K.</blockquote><p class="loc">Table 1 表注，第 3 页</p></li>
+      <li data-key="pddl-match"><blockquote lang="en">e.g. for the goal state “Block a is on block b. Block b is on the table”, if at current state “Block a is on the table. Block b is on the table”, then the matching score is 0.5.</blockquote><p class="loc">附录 K.2，第 21 页</p></li>
+      <li data-key="prompt-5"><blockquote lang="en">Basically, a prompt consists of 5 parts.</blockquote><p class="loc">附录 N，第 26 页</p></li>
+      <li data-key="alf-regex"><blockquote lang="en">For instance, for the task “put a pencil on the desk”, we annotate one necessary observation as “You pick up the pencil +. ”.</blockquote><p class="loc">附录 L.2，第 23 页</p></li>
+      <li data-key="alf-flag"><blockquote lang="en">The final success flag combined with the N-1 annotated subgoals constitutes the set of N subgoals.</blockquote><p class="loc">附录 L.2，第 23 页</p></li>
+      <li data-key="alf-step"><blockquote lang="en">Action: open fridge 1 Observation: You open the fridge 1. The fridge 1 is open. In it, you see a apple 2, a egg 1, a lettuce 1, a pan 2, a plate 1, and a tomato 1.</blockquote><p class="loc">Table 2，第 4 页</p></li>
+      <li data-key="env-error"><blockquote lang="en">(3) issue errors when the agent performs an action outside of the action space.</blockquote><p class="loc">第 2.1 节，第 4 页</p></li>
+      <li data-key="to-step"><blockquote lang="en">In “Sheet17”, calculate and complete the “Profit” of the products in the table based on the sales information of the products.</blockquote><p class="loc">Table 2，第 4 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

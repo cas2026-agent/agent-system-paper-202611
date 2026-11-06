@@ -1,0 +1,420 @@
+<article class="view frame paper" id="view-deltabox" data-paper="deltabox" hidden>
+
+<header class="masthead">
+  <h1 lang="en">DeltaBox: Scaling Stateful AI Agents with Millisecond-Level Sandbox Checkpoint/Rollback</h1>
+  <p class="zh">DeltaBox：用毫秒级沙箱检查点与回滚支撑有状态的 AI 智能体</p>
+  <p class="by">Yunpeng Dong、Jingkai He、Shiqi Liu、Yuze Hou、Dong Du、Zhonghu Xu、Si Yu、Baochuan Yang、Yubin Xia、Haibo Chen，上海交通大学 IPADS、华为</p>
+  <div class="meta">
+    <span class="venue">arXiv 2605.22781v2，cs.OS，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>操作系统</span><span>智能体沙箱</span><span>状态检查点与回滚</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>智能体为什么要频繁回滚</h2><span class="fn">Figure 1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/deltabox/fig1.png" alt="SWE-bench 通过率：MCTS 与 RL 训练带来的提升" loading="lazy"></button>
+    </figure>
+    <p>纵轴是 SWE-bench 的通过率。左图橙色是一条路走到底的智能体，蓝色是用蒙特卡洛树搜索（MCTS）的智能体，三个模型都提高了 4.7 到 6.7 个百分点；右图橙色是原始模型，蓝色是强化学习训练后的模型，提高了 19.2 到 29.4 个百分点。搜索和训练是目前提升编程智能体最有效的两条路，而两者都要求能快速地保存和恢复沙箱的完整状态（文件和进程）[[abstract-cr]]。</p>
+    <p>两种需求的形态不同。树搜索是纵向的，要随时回到任意一个历史节点；Best-of-N 是横向的，要把初始沙箱快速复制 N 份[[two-axes]]。强化学习训练每一步都要从一个准备好的状态开出几十到上百个沙箱，现在靠新建 Docker 容器或从虚拟机快照恢复，单次就要几百毫秒到几秒[[rl]]。保存和恢复的次数随搜索深度、分支数和训练步数成倍增长，单次开销哪怕只有一秒，总量也会压过模型推理本身。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2></div>
+    <dl class="defs">
+      <dt>智能体沙箱</dt><dd>隔离执行智能体动作的容器或轻量虚拟机。本文的沙箱里常驻一个智能体进程，所以沙箱状态包括文件系统和这个进程的内存。</dd>
+      <dt>检查点与恢复</dt><dd>把某一时刻的完整状态保存下来，之后能回到这个状态。对智能体而言就是回滚。</dd>
+      <dt>overlayfs</dt><dd>Linux 的叠层文件系统。下面是只读的 lower 层，上面是可写的 upper 层，程序看到的是叠加结果；修改文件时先把它从下层复制到上层（copy-up）。原生实现的层在挂载时固定，运行中不能增删。</dd>
+      <dt>写时复制</dt><dd>多方共用一份数据，有人要改时才把被改的部分复制出来。fork、reflink、copy-up 都基于这个思路。</dd>
+      <dt>XFS reflink</dt><dd>文件级写时复制。复制文件时只增加对数据块的引用，写入时才按 4 KB 的块分配新空间。</dd>
+      <dt>fork</dt><dd>Linux 创建子进程的系统调用，只复制页表，内存页由父子进程写时复制共享，所以耗时和进程占用的内存大小基本无关。</dd>
+      <dt>CRIU</dt><dd>把运行中的进程完整保存成镜像文件、之后再恢复出来的工具。lazy-pages 模式下恢复时按需读回内存页。</dd>
+      <dt>Firecracker</dt><dd>AWS 开源的轻量虚拟机，常用于 serverless 和智能体沙箱。它的快照包含内存和设备状态，不包含磁盘。</dd>
+      <dt>E2B、CubeSandbox</dt><dd>两个面向智能体的沙箱产品。E2B 靠暂停整台虚拟机做快照；CubeSandbox 用 reflink 卷加内存脏页跟踪做写时复制快照，但需要定制的宿主机内核。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、洞见、机制、效果</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>编程智能体改的是真实的操作系统状态，改对话历史撤销不了[[real-os]]。树搜索不停回退，昂贵的恢复反复出现在等待路径上[[critical-path]]，而现有方案保存和恢复都要复制整个状态[[challenge2]]。</p></div>
+      <div class="step key"><h3>洞见</h3><p>相邻两次存档之间只多了几个文件、改了少量内存页，只需保存这部分变化[[insight]]。文件系统和进程内存被当作一对按变化保存的状态，称为 DeltaState。</p></div>
+      <div class="step"><h3>机制</h3><p>DeltaFS 让 overlayfs 能在运行中插入新的可写层[[ioctl]]；DeltaCR 用 fork 出来并冻结的进程当模板，恢复时再 fork 一份，只复制页表[[fork-fast]]。两者在相同时刻成对保存。</p></div>
+      <div class="step"><h3>效果</h3><p>存档约 10.83 毫秒，与大模型推理重叠，智能体不用等；恢复约 1.86 毫秒。SWE-bench 搜索中花在沙箱上的时间占比从 23% 到 48% 降到 1% 到 2%[[e2e]]。</p></div>
+    </div>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">问题</span><h2>文件和进程必须一起回滚</h2><span class="src">§2.2、§2.4</span></div>
+    <div class="pair">
+      <div><h3>只回滚文件</h3><p>进程内存里的对话历史和工具输出还记着那些已经不存在的磁盘修改。</p></div>
+      <div><h3>只回滚进程</h3><p>进程回到了过去，却在另一条分支留下的文件上继续干活。</p></div>
+    </div>
+    <p>两种错位都会让一个搜索节点每次展开的结果不一样[[coupling]]，树搜索赖以成立的确定性就没了。进程状态里装的是大模型的对话历史、工具的输出、打开的文件描述符；如果回滚时丢掉进程、只恢复文件，就只能从头重新执行之前的所有命令来重建它，代价随搜索深度线性增长。所以一个存档必须是“文件状态加内存状态”这一对，并且两者对应相同的时刻。</p>
+    <p>据此，设计目标有四个：文件与进程联合保存和恢复，耗时在毫秒级；保存时复制的数据量只和实际改动多少有关，和工作目录大小无关；回到任意历史存档的时间是常数；对智能体透明，不改它的代码、不重启、不丢上下文。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>现有方案对比</h2><span class="fn">Table 1</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>方法</th><th class="r">保存</th><th class="r">恢复</th><th>复制量随什么增长</th><th class="c">分支共享内存</th><th class="c">文件</th><th class="c">进程</th><th class="c">任意回滚</th><th class="c">不改宿主内核</th></tr></thead>
+      <tbody>
+        <tr><td>Git stash/branch</td><td class="r">100 ms–1 s</td><td class="r">100 ms–1 s</td><td>文件数</td><td class="x">✗</td><td class="y">✓</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>复制目录</td><td class="r">100 ms–10 s</td><td class="r">100 ms–10 s</td><td>目录大小</td><td class="x">✗</td><td class="y">✓</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Docker commit</td><td class="r">50 ms–10 s</td><td class="r">1–10 s</td><td>镜像层</td><td class="x">✗</td><td class="y">✓</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Btrfs/LVM 快照</td><td class="r">10–100 ms</td><td class="r">10 ms–1 s</td><td>低</td><td class="x">✗</td><td class="y">✓</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Firecracker 快照</td><td class="r">200 ms–2 s</td><td class="r">120–700 ms</td><td>整台虚拟机</td><td class="x">✗</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>DSec</td><td class="r">—</td><td class="r">日志重放</td><td>日志长度</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td><td class="x">✗</td><td class="y">✓</td></tr>
+        <tr><td>CubeSandbox</td><td class="r">49.8 ms</td><td class="r">63.9 ms</td><td>整台虚拟机</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="x">✗</td></tr>
+        <tr><td>E2B</td><td class="r">约 4 s/GiB</td><td class="r">约 1 s</td><td>整台虚拟机</td><td class="x">✗</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr class="me"><td>DeltaBox</td><td class="r">10.83 ms</td><td class="r">1.86 ms</td><td>4 KB 块</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+      </tbody>
+    </table></div>
+    <p>现有方案可以分成三类。前四行只管文件，进程内存直接丢弃，回滚后要重启进程并重放命令。Firecracker 和 E2B 以整台虚拟机为单位做快照，内核、系统守护进程的内存都被一起保存，粒度太粗，耗时随虚拟机内存增长；Firecracker 的快照还不含磁盘，文件系统要另外处理。DSec 不能回到任意历史点，只能重放日志里缓存的输出。最接近需求的是 CubeSandbox，五十到六十多毫秒，文件和进程都覆盖，但它要求更换宿主机内核，在云上部署门槛很高。</p>
+    <p>表里没有一种方法同时做到按进程粒度、文件与内存联合、毫秒级，这就是 DeltaBox 要填的位置。CubeSandbox 的数字是厂商公布的。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">洞见</span><h2>只保存相邻两次存档之间的变化</h2><span class="fn">Figure 2</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/deltabox/fig2.png" alt="DeltaBox 设计总览" loading="lazy"></button>
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <p>图从左往右是时间。上排每个方框是一个时刻的沙箱，绿色格子代表内存状态，黄色格子代表文件状态；下排是每次存档（deltaCheckpoint）真正保存的内容，只有这一步新改动的那几个格子。最右边智能体决定回到 Step-1，读档（deltaRestore）丢掉 Step-1 之后的改动，用到 Step-1 为止的变化拼出当时的状态。</p>
+        <p>这个想法之所以能落地，是因为 Linux 里已经有两个现成的“变化”表示。overlayfs 的每一层本来就只记录相对下层的改动，冻结当前可写层、在上面再放一层，就等于存了一个文件增量。fork 出的子进程和父进程靠写时复制共享内存，冻结住的子进程就是父进程那一刻内存的快照，只占后来被改动的那些页。缺的是两样东西：overlayfs 不允许运行中加层，fork 出来的进程也不总是能安全地被冻结和再次 fork。DeltaFS 和 DeltaCR 分别补的就是这两处。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">需求</span><h2>文件状态的存档要满足什么</h2><span class="src">§1、§2.2、§2.3</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>要求</th><th>来自智能体的哪种行为</th></tr></thead>
+      <tbody>
+        <tr><td class="wrap">耗时和空间不随工作目录变大而增长</td><td class="wrap">工作目录是整个克隆下来的仓库，动辄数十万个文件[[workdir]]</td></tr>
+        <tr><td class="wrap">新增、修改、删除都能撤销</td><td class="wrap">每次编辑源码、pip install、改配置都在改文件，rm 会删文件</td></tr>
+        <tr><td class="wrap">每次存档在毫秒级</td><td class="wrap">MCTS 每展开一个节点就存一次，一次搜索几十上百次</td></tr>
+        <tr><td class="wrap">回到任意历史节点的时间是常数</td><td class="wrap">树搜索会跳回很早的分支，回退深度不固定</td></tr>
+        <tr><td class="wrap">不卸载、不重启</td><td class="wrap">智能体进程一直开着文件，甚至把文件映射进内存</td></tr>
+        <tr><td class="wrap">与内存快照对应相同时刻</td><td class="wrap">文件和进程必须成对回滚，否则两者错位</td></tr>
+      </tbody>
+    </table></div>
+    <p>文件这一半的难处在于规模和频率的组合。仓库有数十万个文件，智能体每一步通常只动其中几个：改一个源文件里的几行，或者 pip install 往 site-packages 里新增一批文件。存档如果按“目录有多大”付出代价，在搜索的频率下就承受不起；它应该只按“这一步改了多少”付出代价。回滚也一样，跳回十步之前的节点不应该比跳回一步之前更慢。</p>
+    <p>现有的文件工具都在某一项上不达标，它们的共同做法是复制[[challenge1]]，并且只管文件、丢掉进程内存[[fs-tools]]。复制目录的成本与目录大小成正比。git stash 或分支只管版本库跟踪的文件，装进 site-packages 的依赖、构建产物、被 .gitignore 忽略的文件通常都不在它的范围内，而这些恰恰是 pip install 和编译改动的地方。Docker commit 把容器的改动打包成镜像层，回滚要用新镜像重启容器，恢复需要 1 到 10 秒。Btrfs、ZFS 和 LVM 快照是块级写时复制，速度不差，但要把沙箱的存储整体换成这些文件系统[[storage-stacks]]，并且快照以整个卷为单位。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">需求</span><h2>overlayfs 为什么天然是增量</h2><span class="fn">Figure 4(a)</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>程序的操作</th><th>overlayfs 的处理</th><th>可写层里留下什么</th></tr></thead>
+      <tbody>
+        <tr><td>读文件</td><td class="wrap">从上往下逐层查找，用找到的第一个</td><td>什么都不留</td></tr>
+        <tr><td>第一次改下层的文件</td><td class="wrap">先把整个文件复制到可写层（copy-up），再改副本</td><td>改过的文件</td></tr>
+        <tr><td>新建文件</td><td class="wrap">直接写在可写层</td><td>新文件</td></tr>
+        <tr><td>删除下层的文件</td><td class="wrap">在可写层放一个同名的“删除标记”（whiteout），遮住下层文件</td><td>删除标记</td></tr>
+      </tbody>
+    </table></div>
+    <p>overlayfs 是 Linux 的叠层文件系统，Docker 容器的文件系统就建立在它上面。它把一个只读的下层（lower，可以有多层）和一个可写的上层（upper）叠成一个统一的视图交给程序。程序以为自己在读写一个普通目录，实际上所有修改都只落在上层，下层永远不变。</p>
+    <p>从上表可以看出，上层里装的恰好是“相对于下层的全部改动”：改过的文件、新文件、删除标记，没有改动的文件一个都不在里面。这正是存档需要的增量。如果在某一刻把当前上层冻结成只读，再在它上面放一个新的空上层，被冻结的那一层就是“到这一刻为止这一步的改动”，相当于做了一次存档，而且不复制任何未改动的数据。回滚则是把上面几层拿掉：被拿掉的层里的修改、新文件、删除标记一起消失，下层原来的文件自动重新可见，被删的文件也回来了。存档和回滚都只是改变“哪些层叠在一起”，与仓库里有多少文件无关。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">需求</span><h2>原生 overlayfs 用来做存档时的不足</h2><span class="src">§4.1、§4.1.1、§5、§6.3.2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>原生 overlayfs 的限制</th><th>对智能体存档的影响</th><th>DeltaFS 的做法</th></tr></thead>
+      <tbody>
+        <tr><td class="wrap">层的组合在挂载时固定</td><td class="wrap">想加一层只能卸载再挂载；智能体开着文件时卸载不了，按搜索频率卸载也太慢[[overlay-fixed]]</td><td class="wrap">新增一个 ioctl，在挂载状态下替换整组层[[ioctl]]</td></tr>
+        <tr><td class="wrap">已打开的文件记着它在哪一层</td><td class="wrap">存档前打开的文件，换层后仍指向已冻结的旧上层[[stale-open]]，继续写入会改坏存档</td><td class="wrap">每个文件记下打开时的代号，写入时比对，不一致就按新层重新定位</td></tr>
+        <tr><td class="wrap">内核缓存目录项和 inode</td><td class="wrap">换层后缓存仍可能返回旧层里的结果</td><td class="wrap">换层时把缓存的目录项标记为需要重新验证[[rcu]]</td></tr>
+        <tr><td class="wrap">读操作可能正在使用旧的层数组</td><td class="wrap">换层瞬间立即释放旧数组，正在进行的读会访问已释放的内存</td><td class="wrap">旧数组推迟到两次存档之后再释放[[splice]]</td></tr>
+        <tr><td class="wrap">copy-up 复制整个文件</td><td class="wrap">改一个字节也要复制整个文件，写入量随文件大小线性增长[[ext4-linear]]</td><td class="wrap">底层用开启 reflink 的 XFS，复制只增加块引用，改动时按 4 KB 块分配</td></tr>
+        <tr><td class="wrap">没有“把上层降级为下层”的操作</td><td class="wrap">若把旧上层复制成新的一层，块共享关系丢失，写入量随存档次数线性增长[[rematerialize]]</td><td class="wrap">用户态先把上层目录改名为新的下层，只动元数据[[rename-meta]]，块共享关系保留[[reflink]]</td></tr>
+        <tr><td class="wrap">对一个文件的并发 copy-up 只有一个能成功</td><td class="wrap">换层后可能已有一份属于旧代的上层副本，后来者会碰到“已存在”[[race]]</td><td class="wrap">比较副本所在的挂载，属于当前代就复用，属于旧代就丢弃重建</td></tr>
+      </tbody>
+    </table></div>
+    <p>第一行是表面上的限制，后面几行是真正动手改层时才会暴露的问题，它们都源于原生 overlayfs 默认“层在挂载后不会变”。内核为了速度缓存了很多“这个文件在哪一层”的信息：打开的文件句柄、目录项缓存、正在进行的读操作手里的层数组。一旦允许运行中换层，这些缓存全都可能过期。最危险的是已打开的文件。举个例子，智能体在第 3 步打开一个日志文件不断追加，第 3 步结束时做了存档，旧上层被冻结。如果不处理，第 4 步的追加仍然顺着文件句柄写进已冻结的那一层，存档被悄悄改掉，日后回滚到第 3 步时，看到的却是包含第 4 步内容的文件。DeltaFS 用一个全局计数器 checkpoint_gen 解决：每存档一次加一，每个文件记住自己最后一次定位时的代号，写入路径上两者一致就直接写，不一致就按新的层组合重新找到位置，必要时先 copy-up 到新上层再写。这个检查只在写入时做，读和没变过的文件不受影响，所以叫“惰性切换”。</p>
+    <p>写放大的问题则来自 copy-up 的粒度。智能体典型的编辑是改 12 到 65 KB 文件中的几行，原生 copy-up 每次都复制整个文件；更糟的是，这个文件在后续每一步再被改动，都要从下层再完整复制一份到新的上层，存档越多，这个文件的副本越多。reflink 让 copy-up 变成“新建一个文件，引用原文件的所有数据块”，只有真正改动的 4 KB 块才分配新空间。降级旧上层时用改名而不是复制，文件的块引用关系原样保留，于是一个连续很多次存档都没改过的块在磁盘上始终只有一份。实测中不开 reflink 时写入量随文件大小线性增长，开了以后几乎是常数。</p>
+    <p>还有一个问题文中没有讨论：每次存档都会多出一个下层，查找文件时要从上往下逐层找，层数越多查找路径越长，而 Linux 内核对 overlayfs 的下层数量设有上限（OVL_MAX_STACK，为 500）。一次 30 轮的搜索影响不大，但更长的搜索或训练需要把不再访问的层合并或回收，论文的垃圾回收只针对进程镜像，对文件层如何回收没有说明。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">系统</span><h2>分层架构</h2><span class="fn">Figure 3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/deltabox/fig3.png" alt="DeltaBox 四层架构" loading="lazy"></button>
+    </figure>
+    <p>从下往上：开启 reflink 的 XFS 作为存储，让文件复制变成块级共享；DeltaFS 负责文件状态；DeltaCR 负责进程状态；最上面是搜索策略（一条路走到底、Best-of-N、MCTS），通过调用存档和读档来工作。横跨中间的 StateManager 让每个存档里的文件和内存严格配对。左侧的 NPD 是一个单独的进程，替智能体与大模型 API 通信。</p>
+    <p>StateManager 分在两处。宿主机上的控制器维护一棵和搜索树同构的快照树，每个节点记着进程镜像的位置和文件层的配置；虚拟机里的守护进程 GSD 在本地执行具体的存档和读档，避免每次操作都在宿主机和虚拟机之间往返。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">系统</span><h2>一次存档、一次读档</h2><span class="src">§3.2、§3.3</span></div>
+    <div class="lane"><span class="lab">存档</span>
+      <div class="chain">
+        <div class="node"><b>CRIU 拍照</b><small>后台进行，暂停约 11 ms</small></div><span class="arr">→</span>
+        <div class="node hot"><b>DeltaFS 加层</b><small>旧可写层变只读，上面放新层</small></div><span class="arr">→</span>
+        <div class="node"><b>fork 模板</b><small>子进程立即冻结</small></div><span class="arr">→</span>
+        <div class="node"><b>登记</b><small>编号、镜像、层配置、模板号</small></div>
+      </div>
+    </div>
+    <div class="lane"><span class="lab">读档</span>
+      <div class="chain">
+        <div class="node"><b>结束当前进程</b></div><span class="arr">→</span>
+        <div class="node hot"><b>DeltaFS 换层</b><small>切回目标存档的层组合</small></div><span class="arr">→</span>
+        <div class="node hot"><b>模板还在：fork</b><small>约 1.86 ms</small></div><span class="arr">或</span>
+        <div class="node"><b>模板已清理：CRIU 恢复</b><small>约 9.29 ms</small></div><span class="arr">→</span>
+        <div class="node"><b>从存档后一条指令继续</b></div>
+      </div>
+    </div>
+    <p>存档时，CRIU 让智能体暂停约 11 毫秒拍一张内存照片，写进内存盘；DeltaFS 在这个暂停的瞬间把当前可写层改成只读并放上新层。两件事看到的是相同的冻结时刻，所以文件和内存对得上。拍完照后，智能体在主循环的安全位置 fork 一次，父进程继续干活，子进程立刻把自己冻结，成为这次存档的模板。如果 CRIU 拍照失败，刚才的加层操作会被撤销并报错，不会留下文件和内存不匹配的半成品。</p>
+    <p>存档对智能体几乎没有代价，是因为它发生在智能体等待大模型回复的时候：一次回复要几秒，暂停只有十来毫秒[[sigstop]]。读档则没有这样的掩护，搜索必须等它完成才能继续，所以 DeltaBox 把读档压到只剩“换层”和“fork”两个动作。读档后的进程从存档那一刻的下一条指令继续执行，察觉不到自己被回滚过。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>DeltaFS：运行中可以加层的 overlayfs</h2><span class="src">Figure 4、§4.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/deltabox/fig4.png" alt="传统 overlayfs 与 DeltaFS 对比" loading="lazy"></button>
+    </figure>
+    <p>左图是传统 overlayfs：沙箱镜像在最底下，中间是只读层，上面是可写层，程序看到的 a、b、c 三个文件是各层叠加的结果。右图是 DeltaFS：存档时原来的可写层被冻结成只读的 Step-1 层，上面放一个新的可写层 Step-2，之后的改动都落在新层里。存档就是加一层，回滚就是去掉上面若干层，耗时与文件多少无关。右上角红色的 checkpoint_gen 是每存档一次加一的计数器。</p>
+    <p>一次换层按这样的顺序进行：用户态先把当前上层目录改名，作为新的只读下层；再建一个空目录作为新上层；然后调用 ioctl。内核解析新的层配置，为每个目录建一个私有挂载，组成新的层数组，在自旋锁保护下原子地替换旧数组，把 checkpoint_gen 加一，并把缓存的目录项标记为需要重新验证。被降级的旧上层放在所有下层的最上面，存档前已经 copy-up 过的文件因此仍能被找到；旧数组等两次存档之后、确认没有读操作还在使用时才释放。整个过程不搬动任何文件数据，DeltaFS 的这部分改动约 565 行 C。回滚走的是相同的 ioctl，只是把层组合换成目标存档记录的那一组。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>DeltaCR：恢复时间与进程大小无关</h2><span class="src">Figure 5、§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/deltabox/fig5.png" alt="DeltaCR 架构" loading="lazy"></button>
+    </figure>
+    <p>虚线左边是存档，右边是读档。存档时 GSD 一边让 CRIU 在后台生成镜像链，一边通过管道请求活跃的智能体 fork 出模板放入模板池。读档时先用 ioctl 换层，再查模板池：命中（Hit）就从模板 fork 出新的智能体，没命中（Miss）就用 CRIU 从镜像恢复。</p>
+    <p>快路径快在 fork 只复制页表、不复制内存内容[[fork-fast]]，占几百 MB 和占几 MB 的进程 fork 起来差不多快。fork 在主循环的安全位置进行，此时没有进行中的系统调用和写了一半的文件，并且只复制调用线程，避开了多线程程序 fork 后可能出现的死锁。CRIU 镜像是兜底：模板占内存，模板池有上限，被淘汰的模板仍有镜像可用，只是慢一点，不会出错[[evict]]。镜像本身的清理要考虑搜索算法，MCTS 随时可能重新选中很久没碰过的节点，按“最近没用”删除会导致恢复失败、重选、再失败的循环，所以只清理搜索已经判定不会再访问的节点。</p>
+    <p>fork 之后子进程第一次写某一页时才真正复制，每次几微秒，Python 智能体恢复后第一轮会写很多页。GSD 在另一个 CPU 核上把子进程的可写页挨个读一字节再写回，提前把复制做完；来不及处理的页照常复制，最坏也不比不预热差[[async-warm]]。另一个问题来自大模型 SDK，它们在后台开着 HTTP 连接池和线程池，带着这些线程 fork 会导致半开的连接、错乱的连接池状态和永久死锁[[npd]]。DeltaBox 把 SDK 和网络连接全部移到单独的 NPD 进程，智能体只通过定长管道消息与它通信，模板里便不再有危险的线程。</p>
+  </section>
+
+  <section class="panel s4">
+    <div class="ph"><span class="tag">系统</span><h2>其他设计与实现</h2></div>
+    <p>搜索框架常靠跑测试给节点打分，测试会留下 <code>__pycache__</code> 一类的临时文件。DeltaBox 在跑测试前存档、读完结果后无条件回滚[[test-iso]]，测试便不会污染沙箱。</p>
+    <p>存档是按进程而非按虚拟机做的，一台虚拟机里可以放多个智能体各自独立回滚，整机快照做不到这一点。每台 Firecracker 虚拟机运行带 DeltaFS 模块的定制 Linux 6.8 内核，宿主机通过 virtio-vsock 与 GSD 通信。DeltaFS 的 ioctl 约 565 行 C，DeltaCR 约 1200 行 Python。LangGraph 自带的存档只保存图的逻辑状态，撤销不了已执行的命令，DeltaBox 提供了适配器，让图状态存档时同时触发沙箱存档。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验的整体逻辑</h2>
+    <p>实验围绕两个用途展开，先看 MCTS 搜索（沙箱要频繁回滚），再看强化学习（沙箱要一次开出很多），然后拆开 DeltaBox 看开销来自哪里。所有方案都同时保存文件和进程，否则 MCTS 的回滚结果不确定，比较没有意义。</p>
+  </div>
+
+  <section class="panel s7">
+    <div class="tbl"><table>
+      <thead><tr><th>实验</th><th class="wrap">要回答的问题</th><th class="wrap">改变什么</th><th class="wrap">看什么指标</th></tr></thead>
+      <tbody>
+        <tr><td>单次操作</td><td class="wrap">每次存档、读档让搜索等多久？</td><td class="wrap">沙箱方案、项目类型</td><td class="wrap">单次阻塞时间</td></tr>
+        <tr><td>完整搜索</td><td class="wrap">放进 MCTS 后总时间变多少？</td><td class="wrap">沙箱方案、项目类型</td><td class="wrap">总耗时相对理想耗时的倍数</td></tr>
+        <tr><td>强化学习</td><td class="wrap">一次开很多沙箱时 GPU 还要等吗？</td><td class="wrap">沙箱方案、一次开出的数量 N</td><td class="wrap">fork 耗时、扇出耗时、GPU 利用率</td></tr>
+        <tr><td>开销拆解</td><td class="wrap">时间和存储花在哪里？</td><td class="wrap">操作步骤、文件大小、清理策略</td><td class="wrap">各步耗时、写入字节、镜像占用</td></tr>
+      </tbody>
+    </table></div>
+    <p>搜索实验的负载是用 Qwen3-Coder-30B 在 SWE-bench Verified 上录下的 MCTS 轨迹，按项目特点分成四类：Django 进程大；SymPy 以读为主；Astropy、Matplotlib、scikit-learn、Xarray 等科学计算项目内存占主导；pylint、requests、pytest 等小项目最轻。这种分法覆盖了进程状态重和文件状态重两个极端。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">实验</span><h2>对比哪些方案</h2></div>
+    <dl class="defs">
+      <dt>replay+cp</dt><dd>复制目录保存文件，重放记录的命令恢复进程</dd>
+      <dt>FC-Diff+dm</dt><dd>Firecracker 增量内存快照，加磁盘写时复制快照</dd>
+      <dt>CRIU+cp</dt><dd>复制目录，加 CRIU 保存和恢复进程</dd>
+      <dt>E2B (diff)</dt><dd>自己部署的开源 E2B，暂停恢复时只保存变脏的内存页和磁盘块</dd>
+    </dl>
+    <p>实验里的 E2B 走增量路径，比文档中“每 GB 约 4 秒”的整机暂停快得多[[e2b-note]]，对 DeltaBox 而言是更强的对手。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><h2>每次存档和读档让智能体等待的时间</h2><span class="fn">Table 2</span></div>
+    <div class="bars" data-log="-1,5" style="--lw:96px">
+      <div class="legend"><span><i class="sw a"></i>读档（毫秒）</span><span><i class="sw b"></i>存档（毫秒）</span><span class="muted">对数刻度，每格乘以 10</span></div>
+      <div class="row"><span class="name">replay+cp</span><div class="track"><div class="bar a" data-v="27694"><i>27694</i></div><div class="bar b" data-v="347.0"><i>347.0</i></div></div></div>
+      <div class="row"><span class="name">FC-Diff+dm</span><div class="track"><div class="bar a" data-v="3429"><i>3429</i></div><div class="bar b" data-v="622.3"><i>622.3</i></div></div></div>
+      <div class="row"><span class="name">CRIU+cp</span><div class="track"><div class="bar a" data-v="811.4"><i>811.4</i></div><div class="bar b" data-v="590.0"><i>590.0</i></div></div></div>
+      <div class="row"><span class="name">E2B (diff)</span><div class="track"><div class="bar a" data-v="899.7"><i>899.7</i></div><div class="bar b" data-v="524.4"><i>524.4</i></div></div></div>
+      <div class="row"><span class="name"><b>DeltaBox</b></span><div class="track"><div class="bar a" data-v="1.86"><i>1.86</i></div><div class="bar b" data-v="10.83"><i>10.83</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0.1">0.1</span><span data-t="1">1</span><span data-t="10">10</span><span data-t="100">100</span><span data-t="1000">1000</span><span data-t="10000">1万</span><span data-t="100000">10万</span></div></div>
+    </div>
+    <p>这是单次操作实验的结果，数值是四类项目按事件数加权的平均，注意横轴是对数刻度。读档更要紧，搜索要等它完成才能继续。DeltaBox 读档 1.86 毫秒，E2B 约为它的 480 倍，FC-Diff 约 1800 倍，replay 约 15000 倍[[ratio]]。DeltaBox 的存档 10.83 毫秒只计调用到返回的时间，后台的 CRIU 拍照与大模型推理重叠，不计入。</p>
+    <p>几个基线把开销放在了不同的地方。replay 的存档便宜，每条轨迹只保留一份原始仓库，代价全部推到读档：要冷启动进程、加载代码索引、重跑之前所有的命令，平均要 28 秒。Firecracker 增量快照存档时只抓变脏的页，约 0.5 到 0.7 秒，但读档要沿着 MCTS 的祖先链把一层层增量合并起来，约 3 秒，搜索越深合并越多。E2B 不用合并，但每个节点都要暂停、恢复一次整台虚拟机，每次 0.5 到 1 秒。DeltaBox 在四类项目上的读档在 1.46 到 2.23 毫秒之间，进程大小对它影响很小。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><h2>放进完整搜索后的总耗时</h2><span class="fn">Figure 6</span></div>
+    <div class="bars" data-lin="0,2" style="--lw:84px">
+      <div class="legend"><span><i class="sw a"></i>DeltaBox</span><span><i class="sw g"></i>E2B (diff)</span></div>
+      <div class="row"><span class="name">Django</span><div class="track"><div class="bar a" data-v="1.01"><i>1.01 倍</i></div><div class="bar g" data-v="1.31"><i>1.31 倍</i></div></div></div>
+      <div class="row"><span class="name">SymPy</span><div class="track"><div class="bar a" data-v="1.01"><i>1.01 倍</i></div><div class="bar g" data-v="1.43"><i>1.43 倍</i></div></div></div>
+      <div class="row"><span class="name">科学计算</span><div class="track"><div class="bar a" data-v="1.02"><i>1.02 倍</i></div><div class="bar g" data-v="1.30"><i>1.30 倍</i></div></div></div>
+      <div class="row"><span class="name">小项目</span><div class="track"><div class="bar a" data-v="1.02"><i>1.02 倍</i></div><div class="bar g" data-v="1.93"><i>1.93 倍</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="0.5">0.5</span><span data-t="1">1</span><span data-t="1.5">1.5</span><span data-t="2">2</span></div></div>
+    </div>
+    <p>单次操作快不一定等于总时间短，这个实验放进完整搜索验证。指标是 30 轮 MCTS 的总耗时除以理想耗时（只算大模型和命令执行），1 倍表示沙箱操作完全不花时间。四组的理想耗时分别是 90.5、70.1、83.1、36.2 秒。DeltaBox 只多出 1% 到 2%，E2B 多出 30% 到 93%，也就是 E2B 有 23% 到 48% 的总时间花在保存和恢复沙箱上[[e2e]]。</p>
+    <p>小项目上 E2B 的比例最差，原因在分母：小项目的大模型调用和命令执行本身短，每轮固定的近一秒沙箱开销所占比例就大。这也预示了一个趋势，大模型推理越快，沙箱开销在总时间里越显眼，毫秒级的读档就越重要。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">结果</span><h2>Table 2 逐项解读：每次存档、读档平均让搜索等多久</h2><span class="src">Table 2、§6.1、§6.2.1</span></div>
+    <div class="tbl"><table>
+      <thead>
+        <tr><th rowspan="2">负载类型</th><th class="c" colspan="2">replay+cp</th><th class="c" colspan="2">FC-Diff+dm</th><th class="c" colspan="2">CRIU+cp</th><th class="c" colspan="2">E2B (diff)</th><th class="c" colspan="2">DeltaBox</th></tr>
+        <tr><th class="r">ck 存档</th><th class="r">rs 读档</th><th class="r">ck 存档</th><th class="r">rs 读档</th><th class="r">ck 存档</th><th class="r">rs 读档</th><th class="r">ck 存档</th><th class="r">rs 读档</th><th class="r">ck 存档</th><th class="r">rs 读档</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Django（进程大）</td><td class="r">568.1</td><td class="r">28437</td><td class="r">740.7</td><td class="r">3784</td><td class="r">791.7</td><td class="r">1116</td><td class="r">487.7</td><td class="r">790.2</td><td class="r">12.12</td><td class="r">2.23</td></tr>
+        <tr><td>SymPy（以读为主）</td><td class="r">171.4</td><td class="r">31591</td><td class="r">476.9</td><td class="r">3279</td><td class="r">503.4</td><td class="r">635.7</td><td class="r">536.3</td><td class="r">900.7</td><td class="r">11.96</td><td class="r">2.21</td></tr>
+        <tr><td>科学计算（NumPy 多）</td><td class="r">265.9</td><td class="r">28299</td><td class="r">603.0</td><td class="r">3256</td><td class="r">435.7</td><td class="r">655.1</td><td class="r">552.5</td><td class="r">952.1</td><td class="r">10.86</td><td class="r">1.82</td></tr>
+        <tr><td>工具类小项目</td><td class="r">86.4</td><td class="r">20883</td><td class="r">511.7</td><td class="r">2920</td><td class="r">361.4</td><td class="r">427.1</td><td class="r">515.4</td><td class="r">933.3</td><td class="r">9.16</td><td class="r">1.46</td></tr>
+        <tr class="me"><td>按事件加权平均</td><td class="r">347.0</td><td class="r">27694</td><td class="r">622.3</td><td class="r">3429</td><td class="r">590.0</td><td class="r">811.4</td><td class="r">524.4</td><td class="r">899.7</td><td class="r">10.83</td><td class="r">1.86</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>表在测什么。</b>用 Qwen3-Coder-30B 在 SWE-bench Verified 上跑 MCTS 搜索，把搜索过程录下来，再在五种方案上重放。搜索过程中每调用一次存档或读档，算一个“事件”。表里的每个数是这类事件的平均“阻塞时间”，单位是毫秒，即从调用开始到调用返回、搜索能够继续的这段时间。ck 是 checkpoint，即存档；rs 是 restore，即读档。读档比存档更要紧：读档不返回，下一轮 MCTS 就无法开始[[t2-critical]]。</p>
+    <dl class="defs">
+      <dt>列名的读法</dt><dd>每个方案都要同时恢复进程和文件，列名写成“进程怎么恢复 + 文件怎么恢复”[[t2-naming]]。</dd>
+      <dt>replay+cp</dt><dd>文件用 cp，即 Python 的 shutil.copytree 把整个仓库目录复制一份；进程用 replay，即不保存内存，读档时重新启动智能体、加载代码索引，把录下来的动作按顺序再执行一遍，把内存状态重新算出来。</dd>
+      <dt>FC-Diff+dm</dt><dd>进程用 Firecracker 虚拟机的增量快照（Diff），存档时只保存自上次以来变脏的内存页，保存的是整台虚拟机的内存；文件用 dm-snapshot，即 Linux device-mapper 提供的块设备写时复制快照。</dd>
+      <dt>CRIU+cp</dt><dd>进程用 CRIU 把智能体进程的内存写成镜像，读档时从镜像恢复；文件同样用 copytree 复制目录。</dd>
+      <dt>E2B (diff)</dt><dd>自己部署的开源 E2B，暂停整台虚拟机，保存变脏的内存页和磁盘块，读档时恢复虚拟机。它本身就同时覆盖进程和文件。</dd>
+      <dt>DeltaBox</dt><dd>进程用 DeltaCR（CRIU 镜像加 fork 模板），文件用 DeltaFS（overlayfs 换层）。</dd>
+    </dl>
+    <p><b>四行负载和最后一行。</b>SWE-bench 的任务按项目特点分成四类：Django 智能体进程占内存大；SymPy 以读文件为主；科学计算类（Astropy、Matplotlib、scikit-learn、Xarray）大量使用 NumPy，内存状态重；工具类小项目（pylint、requests、pytest）最轻。四类分别有 4、4、10、6 条搜索轨迹，每条重放两次[[t2-weights]]。最后一行把所有事件放在一起求平均，没有对四行简单平均，所以事件最多的科学计算类对它影响最大。</p>
+    <p><b>表注里的特殊口径。</b>有三处数字的含义和其他格子不同，读表时要注意。第一，replay+cp 只在每条轨迹开头复制一次原始仓库，之后的节点都不再复制，表里的 ck 是这一次复制的耗时；它的读档在重放时直接使用录好的大模型回复，不计大模型的时间[[t2-replay]]，所以 28 秒全部是重启程序、重新执行命令本身的开销，算是下限。第二，FC-Diff+dm 的存档平均值里包含每条轨迹开头一次完整的虚拟机快照[[t2-fc]]，会把平均值抬高一些。第三，DeltaBox 的存档只计调用到返回的时间，后台进行的 CRIU 写镜像不计入[[t2-async]]，因为它与大模型推理同时进行，不让搜索等待。</p>
+    <p><b>从表里能读出什么。</b>横着看每个方案的两列，可以看出它把成本放在哪一头：replay+cp 存档便宜、读档极贵；FC-Diff+dm 存档 0.5 到 0.7 秒，读档要沿着祖先链合并增量，约 3 秒；CRIU+cp 两头都在几百毫秒；E2B 两头都在 0.5 到 1 秒；DeltaBox 两头都在毫秒级。竖着看每一列在四类负载间的变化，可以看出它对什么敏感：E2B 的读档在四类负载上都是 790 到 952 毫秒，几乎不变，因为它每次都暂停和恢复整台虚拟机，和智能体进程大小关系不大；CRIU+cp 的读档在进程最大的 Django 上最慢（1116 毫秒），在工具类小项目上最快（427 毫秒），因为 CRIU 要把内存从镜像里读回来；DeltaBox 也是 Django 最慢、小项目最快，但只在 1.46 到 2.23 毫秒之间，它读档的主要开销是 fork 复制页表，页表大小随进程内存增长[[fork-rss]]，所以仍有轻微差别。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Table 3</span><h2>一次 fork 出很多进程慢不慢</h2></div>
+    <div class="bars" data-lin="0,16" style="--lw:70px">
+      <div class="legend"><span><i class="sw a"></i>fork 中位耗时</span><span><i class="sw b"></i>99 分位耗时</span><span class="muted">毫秒</span></div>
+      <div class="row"><span class="name">N = 1</span><div class="track"><div class="bar a" data-v="0.57"><i>0.57</i></div><div class="bar b" data-v="0.61"><i>0.61</i></div></div></div>
+      <div class="row"><span class="name">N = 4</span><div class="track"><div class="bar a" data-v="0.78"><i>0.78</i></div><div class="bar b" data-v="1.31"><i>1.31</i></div></div></div>
+      <div class="row"><span class="name">N = 16</span><div class="track"><div class="bar a" data-v="1.67"><i>1.67</i></div><div class="bar b" data-v="4.67"><i>4.67</i></div></div></div>
+      <div class="row"><span class="name">N = 64</span><div class="track"><div class="bar a" data-v="5.47"><i>5.47</i></div><div class="bar b" data-v="14.74"><i>14.74</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="4">4</span><span data-t="8">8</span><span data-t="12">12</span><span data-t="16">16</span></div></div>
+    </div>
+    <p>这个实验只测内核 fork，看规模变大时 fork 会不会成为瓶颈。做法是从一个约 15 MB 的智能体模板一次 fork 出 N 个子进程。N 增大 64 倍，中位耗时只增大约 10 倍，开销主要是复制页表；每个子进程实际只多占约 11 MB 内存，大部分页仍与模板共享。在目标规模上 fork 不是瓶颈[[fork-not-bottleneck]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Figure 7</span><h2>强化学习训练时 GPU 还要等沙箱吗</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig7.png" alt="RL 扇出：沙箱扇出延迟、生成与训练时间、GPU 占用率" loading="lazy"></button></figure>
+    <p>左图把完整的沙箱算进来：横轴是一次开出的沙箱数 N，纵轴是总耗时（对数刻度）。每个沙箱都要读一遍父进程写过的 64 MiB 数据并校验，确保内存真的被继承。DeltaBox 比 CubeSandbox 和 E2B 低一个数量级以上。中图是训练 Qwen2.5-7B 时生成回复和训练的耗时，N 为 64 时训练要 4.51 秒。</p>
+    <p>同步强化学习每一步是“开沙箱、生成回复、训练”串行进行，开沙箱时 GPU 只能空等。右图由左、中两图算出：GPU 利用率 =（生成时间 + 训练时间）÷（开沙箱时间 + 生成时间 + 训练时间）。</p>
+    <div class="bars" data-lin="0,100" style="--lw:96px">
+      <div class="legend"><span><i class="sw a"></i>N = 16</span><span><i class="sw b"></i>N = 64</span><span class="muted">同步训练时 GPU 在干活的时间比例 %</span></div>
+      <div class="row"><span class="name">DeltaBox</span><div class="track"><div class="bar a" data-v="97"><i>97</i></div><div class="bar b" data-v="95"><i>95</i></div></div></div>
+      <div class="row"><span class="name">CubeSandbox</span><div class="track"><div class="bar a" data-v="80"><i>80</i></div><div class="bar b" data-v="77"><i>77</i></div></div></div>
+      <div class="row"><span class="name">E2B</span><div class="track"><div class="bar a" data-v="36"><i>36</i></div><div class="bar b" data-v="29"><i>29</i></div></div></div>
+      <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="25">25</span><span data-t="50">50</span><span data-t="75">75</span><span data-t="100">100</span></div></div>
+    </div>
+    <p>DeltaBox 让 GPU 有 95% 到 97% 的时间在干活[[gpu-occ]]，E2B 只有三成左右。改用 verl 这类异步框架可以把等待藏起来，但会让训练数据变旧，DeltaBox 在 N 为 64 时陈旧度 0.81，三者中只有它低于框架要求的阈值 1。模型越小、批越大、训练越快，这个差距越突出。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Table 4</span><h2>一次操作的时间花在哪一步</h2></div>
+    <div class="tbl"><table>
+      <thead><tr><th>步骤（毫秒）</th><th class="r">存档</th><th class="r">读档快路径</th><th class="r">读档慢路径</th></tr></thead>
+      <tbody>
+        <tr><td>换层 ioctl</td><td class="r">0.07</td><td class="r">0.19</td><td class="r">0.25</td></tr>
+        <tr><td>fork</td><td class="r">8.87</td><td class="r">1.34</td><td class="r">—</td></tr>
+        <tr><td>CRIU 拍照或恢复</td><td class="r">后台</td><td class="r">—</td><td class="r">8.72</td></tr>
+        <tr><td>内存页预热</td><td class="r">—</td><td class="r">后台</td><td class="r">后台</td></tr>
+        <tr class="me"><td>智能体实际等待</td><td class="r">0</td><td class="r">1.86</td><td class="r">9.29</td></tr>
+      </tbody>
+    </table></div>
+    <p>换层不到 0.3 毫秒，几乎不占时间，读档的大头是 fork。慢路径只在模板被清理后才会用到，也只要 9 毫秒，仍比基线快两个数量级。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Figure 8</span><h2>后台预热来得及吗</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig8.png" alt="CoW 缺页被吸收比例随空闲窗口变化" loading="lazy"></button></figure>
+    <p>恢复后智能体第一次写内存页时要复制，后台预热想抢在它前面完成。横轴是恢复后智能体的空闲时间（对数刻度），纵轴是写时复制的停顿被提前处理掉的比例，每个绿点是一次恢复。空闲超过约 100 毫秒，比例就接近 100%；黄色阴影是实际观察到的空闲时间（0.5 到 8 秒），全部落在这个区域，因为恢复后智能体通常要先等大模型回复。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Figure 9</span><h2>每次编辑要写多少数据</h2></div>
+    <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig9.png" alt="每次编辑的 copy-up 字节与物理 I/O" loading="lazy"></button></figure>
+    <p>这个实验检验 reflink 是否解决了写放大。横轴是被编辑文件的大小，纵轴是每次编辑写了多少字节（对数刻度），黄色阴影是智能体编辑的常见大小。上半张是 copy-up 复制的数据量：ext4 和不开 reflink 的 XFS 随文件变大一路上升，因为改一个字节也要复制整个文件；开 reflink 后只复制被改的 4 KB 块，复制量几乎与文件大小无关[[edits-small]]。下半张是实际写盘量，小文件主要得益于 XFS 元数据开销小（1–8 KB 档从 132 KB 降到 26 KB），大文件主要得益于 reflink（128–256 KB 档从 315 KB 降到 141 KB）。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">结果</span><span class="fn">Figure 10</span><h2>存档占多少存储</h2></div>
+    <div class="bars" data-lin="0,80" style="--lw:56px">
+          <div class="legend"><span><i class="sw g"></i>保留全部存档</span><span><i class="sw a"></i>按可达性清理</span><span class="muted">镜像占用 MB</span></div>
+          <div class="row"><span class="name">Django</span><div class="track"><div class="bar g" data-v="43"><i>43</i></div><div class="bar a" data-v="17"><i>17</i></div></div></div>
+          <div class="row"><span class="name">Xarray</span><div class="track"><div class="bar g" data-v="55"><i>55</i></div><div class="bar a" data-v="20"><i>20</i></div></div></div>
+          <div class="row"><span class="name">Sympy</span><div class="track"><div class="bar g" data-v="69"><i>69</i></div><div class="bar a" data-v="38"><i>38</i></div></div></div>
+          <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="40">40</span><span data-t="80">80</span></div></div>
+        </div>
+    <p>只清理搜索不会再访问的节点，搜索结束时镜像占用减少 46% 到 63%[[gc]]。</p>
+    <p>还有一个可选的省内存模式：对只读、可重复执行的命令（比如查看文件）不拍内存照片也不加层，只记一个标记，实测 62% 的步骤可以这样处理。代价是回到这样的节点时要把那条命令再执行一遍，所以只在存档占用的内存成为瓶颈时启用[[lw]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>智能体相邻两个状态非常相似，DeltaBox 据此放弃整体复制，改为按变化保存和恢复[[conclusion]]。它没有发明新的存储格式，而是把 Linux 里本来就以“变化”为单位工作的两个机制，overlayfs 的层和 fork 的写时复制，改造成可以频繁、安全使用的存档原语：DeltaFS 让层能在运行中增删，DeltaCR 让冻结的进程能作为模板反复 fork，并用 CRIU 镜像兜底。</p>
+    <p>结果是存档对智能体没有可见的等待，读档约 1.86 毫秒，SWE-bench 搜索中沙箱开销从 E2B 的 23% 到 48% 降到 1% 到 2%，强化学习训练中 GPU 几乎不再等沙箱。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>网络操作无法回滚[[no-net]]，智能体已经发出去的外部请求，比如调用第三方 API、推送代码，撤销不了。Crab 用 eBPF 判断该在什么粒度存档，与 DeltaBox 优化存档机制本身的思路互补[[crab]]。</p>
+    <p>存档没有可见等待的前提是大模型回复足够慢，能把十来毫秒的暂停盖住；推理很快或连续多步都是不调用大模型的工具操作时，这部分开销会露出来。fork 快路径对智能体程序也有要求：要在安全位置 fork，智能体进程宜为单线程，大模型 SDK 必须交给 NPD，“对智能体透明”背后有这些工程前提。DeltaFS 是修改过的内核模块，虚拟机镜像要用定制内核。端到端实验重放的是事先录好的搜索轨迹，测的是沙箱开销降低了多少，同样时间内能多搜索多少节点、解题率能否提高，是由此推出的结论，没有直接测量。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="abstract-cr"><blockquote lang="en">Emerging LLM-powered AI agent workloads, such as test-time tree search and reinforcement learning, require high-frequency state exploration, relying on rapid checkpoint and rollback (C/R) of the complete sandbox state, including files and process state.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="real-os"><blockquote lang="en">A coding agent, by contrast, acts on real OS state [8, 9] through commands like rm, pip install, and sed. These side effects persist on disk and cannot be undone by editing history</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="critical-path"><blockquote lang="en">Because tree search backtracks constantly, this expensive rollback lands repeatedly on the critical path, creating a severe infrastructure bottleneck.</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="two-axes"><blockquote lang="en">Test-time search stresses C/R along two axes at once: horizontally, Best-of-N sampling spreads the inference budget across many parallel trajectories, each needing a fast initial clone [5, 10]; vertically, tree search such as MCTS backtracks to arbitrary historical nodes, demanding fine-grained checkpoint/restore of intermediate states.</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="rl"><blockquote lang="en">Today’s approaches rebuild this warm state per rollout with a fresh Docker container or a microVM snapshot-restore, both in the hundreds-of-milliseconds to seconds regime</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="challenge2"><blockquote lang="en">On checkpoint, E2B pauses a sandbox in ∼4 s per GiB of RAM [25]; on restore, CRIU [26] reloads pages sequentially, taking seconds for multi-GiB processes. Agents, however, need both at millisecond scale on the critical path.</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="insight"><blockquote lang="en">This paper observes that consecutive checkpoints in agent workloads differ only marginally, with only a few new files or modified memory pages between steps. Therefore, instead of duplicating the entire state, a sandbox should only duplicate the changes between consecutive checkpoints (Key Insight).</blockquote><p class="loc">第 1 节，第 2 页</p></li>
+      <li data-key="coupling"><blockquote lang="en">Rolling back only the filesystem leaves the process with stale in-memory context that remembers on-disk changes that no longer exist; rolling back only the process leaves it operating on another branch’s files.</blockquote><p class="loc">第 2.2 节，第 3 页</p></li>
+      <li data-key="workdir"><blockquote lang="en">The filesystem dimension is the agent’s working directory (e.g., a cloned repository of hundreds of thousands of files), mutated by every edit, pip install, or config change.</blockquote><p class="loc">第 2.2 节，第 3 页</p></li>
+      <li data-key="challenge1"><blockquote lang="en">Current systems usually adopt file copying, which incurs high latency.</blockquote><p class="loc">第 1 节，第 1 页</p></li>
+      <li data-key="fs-tools"><blockquote lang="en">Filesystem-only tools (Git stash/branch [33], shutil.copytree, Docker commit, Btrfs/LVM snapshots) version files but discard process memory, forcing a restart and replay.</blockquote><p class="loc">第 2.3 节，第 3 页</p></li>
+      <li data-key="storage-stacks"><blockquote lang="en">Filesystem snapshots in Btrfs [57] and ZFS [58] provide block-level CoW but require different storage stacks</blockquote><p class="loc">第 7 节，第 12 页</p></li>
+      <li data-key="stale-open"><blockquote lang="en">Files (or mmap’d regions) opened before a checkpoint retain stale inode metadata after a hot-switch, since their cached upper-dentry pointers reference the demoted upper.</blockquote><p class="loc">第 4.1.1 节，第 5 页</p></li>
+      <li data-key="rcu"><blockquote lang="en">The layer-array pointer is swapped atomically under a spinlock and the old array freed after an RCU grace period; cached dentries are marked for revalidation so a stale upper is never served from cache.</blockquote><p class="loc">第 5 节，第 8 页</p></li>
+      <li data-key="splice"><blockquote lang="en">It splices the demoted upper as the topmost lower so pre-checkpoint copied-up files stay reachable, and defers freeing the old array two checkpoints later to protect in-flight readers.</blockquote><p class="loc">第 4.1 节，第 5 页</p></li>
+      <li data-key="ext4-linear"><blockquote lang="en">Fig.9(a) shows ext4 and XFS-without-reflink coinciding at every bin, both recopying the whole file on modification and growing linearly with size</blockquote><p class="loc">第 6.3.2 节，第 11 页</p></li>
+      <li data-key="rematerialize"><blockquote lang="en">Approaches that instead re-materialize the demoted layer (e.g., copying it into a new layer) lose these reflink edges and scale write amplification linearly with checkpoint count; DeltaFS’s rename-based demotion avoids that.</blockquote><p class="loc">第 4.1.1 节，第 6 页</p></li>
+      <li data-key="rename-meta"><blockquote lang="en">The user-space controller renames the current upper to a new read-only lower before the ioctl, so only metadata operations hit the critical path.</blockquote><p class="loc">第 4.1 节，第 5 页</p></li>
+      <li data-key="race"><blockquote lang="en">Concurrent copy-up of the same dentry races (the loser sees EEXIST)</blockquote><p class="loc">第 4.1.1 节，第 5 页</p></li>
+      <li data-key="t2-naming"><blockquote lang="en">column naming follows process-recovery+FS-recovery (see §6.1 for baseline definitions).</blockquote><p class="loc">Table 2 标题，第 9 页</p></li>
+      <li data-key="t2-critical"><blockquote lang="en">Restore sits on the agent’s true critical path: no subsequent MCTS iteration can begin until it returns, and DeltaBox keeps it in the millisecond regime.</blockquote><p class="loc">第 6.2.1 节，第 8 页</p></li>
+      <li data-key="t2-async"><blockquote lang="en">the reported checkpoint time is the API call-to-return blocking interval, excluding the asynchronous dump completion.</blockquote><p class="loc">第 6.2.1 节，第 8 页</p></li>
+      <li data-key="t2-replay"><blockquote lang="en">For replay+cp, ck is the trace-weighted once-per-trace pristine-repo copy proxy; rs is event-weighted over restore events and uses zero-latency replay of recorded completions.</blockquote><p class="loc">Table 2 表注，第 9 页</p></li>
+      <li data-key="t2-fc"><blockquote lang="en">FC-Diff+dm’s ck includes one initial root VM checkpoint per trace.</blockquote><p class="loc">Table 2 表注，第 9 页</p></li>
+      <li data-key="t2-weights"><blockquote lang="en">Each archetype contributes 4/4/10/6 SWE-bench Verified trajectories, each replayed twice; all entries are means over the per-event checkpoint/restore measurements pooled per archetype, so the Weighted Avg row is event-weighted across archetypes.</blockquote><p class="loc">Table 2 表注，第 9 页</p></li>
+      <li data-key="fork-rss"><blockquote lang="en">On the fast path the template fork() dominates (scaling linearly with agent RSS via page-table CoW)</blockquote><p class="loc">第 6.3.1 节，第 10 页</p></li>
+      <li data-key="sigstop"><blockquote lang="en">The agent’s brief SIGSTOP window (∼11 ms) fits comfortably within the seconds-scale LLM latency.</blockquote><p class="loc">第 3.2 节，第 5 页</p></li>
+      <li data-key="overlay-fixed"><blockquote lang="en">Standard Linux overlayfs fixes its layer stack at mount time; reconfiguring it requires an umount/mount cycle, impossible while the agent holds open files and untenable at the checkpoint rates MCTS demands.</blockquote><p class="loc">第 4.1 节，第 5 页</p></li>
+      <li data-key="ioctl"><blockquote lang="en">DeltaFS extends the overlayfs kernel module with a custom ioctl that reconfigures the layer stack without unmounting.</blockquote><p class="loc">第 4.1 节，第 5 页</p></li>
+      <li data-key="reflink"><blockquote lang="en">When hot-switch demotes the upper layer via rename(2), it preserves the file’s extent map, meaning the demoted file enters the new lower chain with its reflink edges intact.</blockquote><p class="loc">第 4.1.1 节，第 6 页</p></li>
+      <li data-key="fork-fast"><blockquote lang="en">This fork-based restore stays in the low-millisecond range, as the kernel duplicates only page tables, not memory contents.</blockquote><p class="loc">第 4.2.1 节，第 6 页</p></li>
+      <li data-key="evict"><blockquote lang="en">Evicting a template costs only latency (its CRIU image stays on disk, so a re-selection falls back to the slow path), never correctness.</blockquote><p class="loc">第 4.2.1 节，第 7 页</p></li>
+      <li data-key="async-warm"><blockquote lang="en">Pages it has privatised no longer fault; pages it has not yet reached fall back to plain CoW, so there is no penalty over a no-warm baseline.</blockquote><p class="loc">第 4.2.2 节，第 7 页</p></li>
+      <li data-key="npd"><blockquote lang="en">Forking a template containing these threads leads to fatal issues: keep-alive TCP sockets survive as half-open file descriptors, connection-pool states diverge, and threads frozen mid-handshake permanently deadlock the frozen template.</blockquote><p class="loc">第 4.2.3 节，第 7 页</p></li>
+      <li data-key="test-iso"><blockquote lang="en">Before executing a test, the StateManager takes a pre-test checkpoint. Once the agent reads the test results, the StateManager unconditionally restores to the pre-test checkpoint.</blockquote><p class="loc">第 4.3 节，第 7 页</p></li>
+      <li data-key="e2b-note"><blockquote lang="en">(Table.1 lists E2B’s documented full-VM pause, ∼4 s/GiB; the Table. 2 and Fig. 6 figures are this self-hosted incremental path, hence far lower.)</blockquote><p class="loc">第 6.1 节，第 8 页</p></li>
+      <li data-key="ratio"><blockquote lang="en">E2B restore is ∼480× DeltaBox, and several prototype baselines reach even higher orders of magnitude (FC-Diff ∼1800×, replay ∼15000×; Table.2).</blockquote><p class="loc">第 6.2.1 节，第 9 页</p></li>
+      <li data-key="e2e"><blockquote lang="en">DeltaBox stays at 1.01–1.02×, while E2B (diff) reaches 1.30–1.93×. State management consumes 23–48% of total time on E2B (diff) vs. 1–2% on DeltaBox.</blockquote><p class="loc">第 6.2.1 节，第 9 页</p></li>
+      <li data-key="fork-not-bottleneck"><blockquote lang="en">The fork primitive is thus not the fan-out bottleneck at our target scales.</blockquote><p class="loc">第 6.2.2 节，第 10 页</p></li>
+      <li data-key="gpu-occ"><blockquote lang="en">DeltaBox sustains near-saturating occupation (95–97%) while CubeSandbox (77–80%) and E2B (29–36%) sit below.</blockquote><p class="loc">第 6.2.2 节，第 10 页</p></li>
+      <li data-key="edits-small"><blockquote lang="en">Real swe-search edits touch only a small fraction of each file, so reflink duplicates a near-constant handful of blocks regardless of the file it lands in.</blockquote><p class="loc">第 6.3.2 节，第 11 页</p></li>
+      <li data-key="gc"><blockquote lang="en">it reduces end-of-trajectory dump storage by 46–63% versus retaining every checkpoint (Fig.10b).</blockquote><p class="loc">第 6.3.4 节，第 11 页</p></li>
+      <li data-key="lw"><blockquote lang="en">we therefore enable LW only when snapshot memory, not restore latency, is the bottleneck.</blockquote><p class="loc">第 6.3.3 节，第 11 页</p></li>
+      <li data-key="conclusion"><blockquote lang="en">Recognizing that subsequent agent states are highly similar, DeltaBox eschews full state duplication in favor of diff-based checkpoint and restore.</blockquote><p class="loc">第 8 节，第 12 页</p></li>
+      <li data-key="no-net"><blockquote lang="en">DeltaBox does not currently support network I/O rollback, which may incur external side effects.</blockquote><p class="loc">第 4.2.3 节，第 7 页</p></li>
+      <li data-key="crab"><blockquote lang="en">We believe the two approaches are complementary; integrating Crab’s semantic awareness with DeltaBox’s optimized OS primitives could yield even greater performance benefits.</blockquote><p class="loc">第 7 节，第 12 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>
