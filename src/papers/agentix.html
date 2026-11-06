@@ -1,0 +1,230 @@
+<article class="view frame paper" id="view-agentix" data-paper="agentix" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Agentix: An Efficient Serving Engine for LLM Agents as General Programs</h1>
+  <p class="zh">Agentix：把智能体当作通用程序来服务的推理引擎</p>
+  <p class="by">Michael Luo、Xiaoxiang Shi、Colin Cai 等，UC Berkeley、Google DeepMind、上海交通大学</p>
+  <div class="meta">
+    <span class="venue">NSDI 2026（arXiv 版名为 Autellix）</span>
+    <div class="crumb"><span>计算机系统</span><span>推理服务</span><span>调度</span><span>program 级</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>agentic program：运行时才展开的 DAG</h2><span class="fn">Fig. 1</span><span class="src">§1、§2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig1.png" alt="四种智能体程序的执行流程：聊天、ReAct、Mixture of Agents、蒙特卡洛树搜索" loading="lazy"></button>
+    </figure>
+    <p>论文把智能体应用称为 agentic program：由一个或多个智能体的模型调用和外部中断（工具调用、代码执行、人的输入）组成的有向无环图。(a)(b) 是单线程程序，模型调用和中断交替，长度取决于用户输入和控制流；(c)(d) 是多线程程序，线程不断分叉和合并。图的形状只在运行时才显现，无法事先知道或预测[[runtime]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>两层排队阻塞</h2><span class="fn">Fig. 2</span><span class="src">§1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig2.png" alt="四个程序在 batch 大小为 2 的引擎上，FCFS、MLFQ、PLAS 三种调度的甘特图" loading="lazy"></button>
+    </figure>
+    <p>现有推理引擎只看单个调用，忽略了调用之间、调用与程序之间的依赖[[ignore]]。例子：(a) 四个程序同时到达，A、B 长，C、D 短，引擎一次跑两个调用。(b) 先来先服务（FCFS，vLLM 的默认策略）：A、B 的长调用先占住引擎，C、D 要等到第 3、4 步才开始，这是调用级的队头阻塞，总等待 18 个单位。(c) 多级反馈队列（MLFQ）可以抢占长调用，让 C、D 先跑；但新到的调用都进最高优先级队列，A、B 后续的调用不断插到 D 前面，这是程序级的队头阻塞[[prog-hol]]，总等待仍是 18。(d) Agentix 的 PLAS 按程序已经消耗的服务时间排序，A、B 的后续调用排到后面，总等待降到 12。</p>
+  </section>
+
+  <div class="band">
+    <h2>动机实验：时间花在等待上，程序内部的缓存可以复用</h2>
+    <p>单线程程序的端到端延迟由三部分组成：调用在引擎里排队的等待时间、调用实际计算的执行时间、等外部中断的时间。第三部分与推理服务无关，论文只处理前两部分[[scope]]。以下实验用 LLaMA-3.1-8B 和一张 A100。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>负载上来后，程序主要在等</h2><span class="fn">Fig. 5</span><span class="fn">Fig. 4</span><span class="src">§3.1</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 5</span>执行与等待的比例</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig5.png" alt="聊天、ReAct、MCTS 程序在不同负载下执行时间和等待时间的占比" loading="lazy"></button>
+      </figure>
+      <p>聊天、ReAct、MCTS 三类程序在负载升高后，大部分时间都在等待[[wait]]，等待多少还取决于负载类型。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 4</span>减少等待会提高吞吐</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig4.png" alt="一小时稳态中引擎内的调用数：vLLM 与 Agentix" loading="lazy"></button>
+      </figure>
+      <p>调用完成得快，程序就能更早发出下一个调用，引擎里同时存在的调用更多，组批的机会也更多。一小时的稳态中，Agentix 比 vLLM 平均多容纳 10 个并发调用[[plus10]]。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>短调用、短程序等得最久；程序内部前缀几乎全能复用</h2><span class="fn">Fig. 6</span><span class="fn">Fig. 7</span><span class="src">§3.1、§3.2</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 6</span>等待时间与执行时间之比</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig6.png" alt="聊天和 MCTS 中，按输出长度和按调用数分组的等待与执行时间之比" loading="lazy"></button>
+      </figure>
+      <p>(a)(c) 按调用的输出长度分组：FCFS 下短调用的比值最高，即调用级阻塞；MLFQ 能压低短调用的比值。(b)(d) 按程序的调用数分组：FCFS 和 MLFQ 下调用少的程序比值都高，即短程序等得最久，MLFQ 没有解决程序级阻塞。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 7</span>程序内与程序间的前缀命中率</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig7.png" alt="按输入长度的前缀缓存命中率：同一程序内与不同程序之间" loading="lazy"></button>
+      </figure>
+      <p>一个程序内部，各种输入长度下命中率都在 90% 以上[[locality]]；不同程序之间，命中率随输入变长迅速下降，因为它们只共享系统提示。这一点决定了后面多引擎时怎样分配调用。</p>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>设计：进程表、按程序已用服务时间排优先级、离散队列与防饿死、兼顾局部性的负载均衡</h2>
+    <p>Agentix 是一层建在推理引擎上的服务系统，设计目标是降低程序的端到端延迟、提高 GPU 利用率，并用 P95、P99 衡量公平性。它不需要事先知道程序何时到达、执行图长什么样、负载如何分布[[nonclair]]。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>有状态的会话与全局进程表</h2><span class="fn">Fig. 8</span><span class="src">§4.1、§4.2.1、§5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig8.png" alt="Agentix 架构：前端会话、进程表、负载均衡器、引擎内的调度器与内存管理" loading="lazy"></button>
+    </figure>
+    <p>普通推理 API 是无状态的。Agentix 让程序在用户本地运行，导入它的库后自动开启一个会话，之后的每次模型调用都带上会话编号，程序结束时关闭会话。对开发者来说接口看起来仍是无状态的。</p>
+    <p>服务端维护一张进程表，每个程序一行：已获得的服务时间、累计等待时间、所在引擎、每个活跃调用（线程）的到达、等待和服务时间，以及最近一次调用到达和完成的时间（用来发现停滞的程序和长时间的外部中断）。调度器和负载均衡器都读这张表。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>PLAS 与 ATLAS：按已用服务时间排优先级</h2><span class="fn">Fig. 9</span><span class="src">§4.2.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig9.png" alt="多线程程序的critical path示例，以及考虑与不考虑critical path时的完成时间" loading="lazy"></button>
+    </figure>
+    <p><b>为什么用已用服务时间。</b>最短作业优先能使平均响应时间最小，但需要知道程序还要跑多久，这里做不到。不知道作业长度时的常用替代是最少已获服务优先（LAS）：已经跑了很久的，多半还要跑很久，先让新来的跑。</p>
+    <dl class="defs">
+      <dt>PLAS（单线程）</dt><dd>一个调用的优先级等于它所属程序之前所有已完成调用的运行时间之和，数值越大优先级越低。调用完成时更新进程表里的总服务时间。</dd>
+      <dt>ATLAS（多线程）</dt><dd>多线程程序的完成时间由critical path（最长的一串相互依赖的调用）决定。图中例子：不考虑critical path时完成时间是 14 个单位，考虑时是 11。ATLAS 用“已观察到的最长critical path的执行时间”作为程序的服务时间[[atlas]]。每个程序只存这一个数：新调用以它作为优先级，调用完成时若自己这条路径更长就更新它，不需要记录调用之间的依赖[[atlas-simple]]。一个程序的并行调用拿到相同的优先级，会被一起调度，不会有某个线程被落下。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>离散队列、防饿死、内存交换、负载均衡</h2><span class="fn">Fig. 10</span><span class="src">§4.2.2、§4.3</span></div>
+    <div class="pair">
+      <div>
+        <h3>为什么要离散成队列</h3>
+        <p>直接按连续的优先级抢占，最坏会退化成轮转调度，比 FCFS 还差，还会频繁在 CPU 和 GPU 之间换入换出 KV 缓存[[rr]]。所以把优先级分成 K 个队列：与 MLFQ 不同，新调用按所属程序的优先级进入对应的队列，不会一律进入最高队列；队列内先来先服务，用完时间片就降一级。</p>
+        <p><b>防饿死。</b>简单地把等太久的调用提到最高队列，会让长程序的调用重新打断短程序，退化成普通 MLFQ[[starve]]。Agentix 改看程序级的比值：程序和调用的总等待时间除以总服务时间超过阈值 β，才把这个调用提到最高队列，提升后只清零这个调用自己的等待和运行时间。β 用来在平均响应时间和公平性之间取舍。</p>
+      </div>
+      <div>
+        <h3>抢占带来的内存开销</h3>
+        <p>抢占使引擎里同时存在的调用更多，KV 缓存频繁在 GPU 和 CPU 之间交换。两项处理：每 N 个 decode 步才调度一次，并预先多放一些排队的调用在 GPU 上，以便有调用提前结束时立刻补上；改写交换函数，vLLM 原来每个 KV 块单独发起一次异步拷贝，改为先汇集到一块连续的主机缓冲区再一次性传输。</p>
+        <h3>多引擎的负载均衡</h3>
+        <p>输入不超过 2048 token 的短调用，在任何引擎上都能靠共享的系统提示达到 75% 以上的命中率[[short]]，所以发往最空闲的引擎；长调用固定发往它所属程序已经在用的引擎，保住前缀缓存，偶尔排队也值得。这只需要程序编号，不需要维护全局的前缀树。</p>
+      </div>
+    </div>
+    <p class="cap">实现：约 5000 行 Python 和 CUDA/C++，基于 vLLM v0.6.1，只改了调度器和交换函数[[impl]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验：单引擎、多引擎、消融</h2>
+    <p>平台为 GCP 上一台 8 张 A100-80GB 的机器；LLaMA-3.1-8B、70B 和 Falcon-180B 分别用 1、4、8 张卡。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">设置</span><h2>四种负载与指标</h2><span class="fn">Fig. 11</span><span class="src">§6.1、§6.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig11.png" alt="ShareGPT、BFCL、LATS 的输入输出长度分布与每个程序的调用数分布" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>负载</th><th class="wrap">程序是什么</th><th class="r">平均调用数</th><th class="wrap">每次调用</th></tr></thead>
+      <tbody>
+        <tr><td>ShareGPT</td><td class="wrap">一整段对话作为一个程序[[sharegpt]]</td><td class="r n">6.66</td><td class="wrap">输出多：平均输出 277、输入 256 token</td></tr>
+        <tr><td>BFCL</td><td class="wrap">多轮多步的工具调用任务（ReAct）</td><td class="r n">10.75</td><td class="wrap">输入多：平均 735 token（长系统提示和工具签名），输出 34</td></tr>
+        <tr><td>LATS</td><td class="wrap">在 HotpotQA 上做蒙特卡洛树搜索，多线程</td><td class="r n">159.7</td><td class="wrap">输入 467、输出 73</td></tr>
+        <tr><td>Mixed</td><td class="wrap">三者等比例混合</td><td class="r"></td><td class="wrap"></td></tr>
+      </tbody>
+    </table></div>
+    <p>按程序（而不是按调用）随机抽样，到达时间用泊松过程生成[[poisson]]。指标是程序级的每 token 延迟：程序的总响应时间除以 token 数[[metric]]，多线程程序用critical path的响应时间。对照组：vLLM v0.6.1（FCFS）；vLLM-opt（打开分块 prefill、前缀缓存和多步调度）；在 vLLM-opt 上加 MLFQ 抢占。batch 上限都相同。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>单引擎：相同延迟下的吞吐</h2><span class="fn">Fig. 12</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig12.png" alt="四种负载、三种模型下，各系统的程序级延迟随到达率的变化" loading="lazy"></button>
+    </figure>
+    <p>行是负载，列是模型，横轴是程序到达率，纵轴是延迟。曲线越靠右，说明在相同延迟下能承受的到达率越高。vLLM 没有前缀缓存，最早上翘。ShareGPT 和 BFCL 上，FCFS 随到达率升高出现严重的队头阻塞；MLFQ 解决了调用级阻塞，吞吐是 vLLM-opt 的 1.5 倍；Agentix 同时处理两级阻塞，在高负载下达到 vLLM 的 8 倍、vLLM-opt 的 2 倍、MLFQ 的 1.5 倍[[single]]。LATS 上，MLFQ 一味追逐短调用，反而拖慢程序，Agentix 的 ATLAS 把程序的线程一起调度。Mixed 上差距最大，达到 vLLM 的 15 倍、MLFQ 的 5.5 倍、vLLM-opt 的 5 倍[[mixed]]。</p>
+    <p class="mine"><b>本页说明：</b>摘要中“4 到 15 倍”的对照是没开前缀缓存的 vLLM；与打开前缀缓存等优化的 vLLM-opt 相比，引言给出的是 2 到 5 倍，这是更公平的比较。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>尾延迟</h2><span class="fn">Fig. 13</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig13.png" alt="LLaMA-3.1-8B 上四种负载的 P95 和 P99 延迟" loading="lazy"></button>
+    </figure>
+    <p>抢占式调度能降低平均延迟，但可能饿死长程序、拉高尾延迟。ShareGPT 上 MLFQ 的平均延迟比 vLLM-opt 好很多，P95、P99 却很差[[mlfq-tail]]；BFCL 上 MLFQ 两项都更好。Agentix 在 8 个场景中有 7 个的尾延迟低于 MLFQ 和 vLLM-opt[[tail]]，在 P95、P99 下吞吐最多高 1.7 倍。防饿死机制在这里起作用。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>多引擎：只用程序编号做负载均衡</h2><span class="fn">Fig. 14</span><span class="fn">Fig. 15</span><span class="src">§6.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig14.png" alt="多引擎下四种负载均衡策略的平均、P95、P99 延迟" loading="lazy"></button>
+    </figure>
+    <p>调度都用 PLAS 或 ATLAS，只比较负载均衡：轮转、最空闲优先、Preble（维护全局前缀树，长前缀匹配发往局部性最好的引擎）和 Agentix。4 个 LLaMA-3.1-8B 副本或 2 个 70B 副本，跑 ShareGPT 和 LATS。Agentix 比简单策略吞吐最多高 1.4 倍，与 Preble 接近[[lb]]，但不用维护前缀树。ShareGPT 上优势更明显，因为对话历史的复用多。Fig. 15 显示在相同 SLO 下，可承受的到达率随副本数线性增长。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentix/fig15.png" alt="不同 SLO 下最大到达率随副本数的变化" loading="lazy"></button>
+    </figure>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>消融：离线批处理、时间构成、交换函数</h2><span class="fn">Fig. 16</span><span class="fn">Fig. 17</span><span class="fn">Fig. 18</span><span class="src">§6.5</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 16</span>离线批处理</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig16.png" alt="不同程序数下各系统处理完一批程序的总时间" loading="lazy"></button>
+      </figure>
+      <p>所有程序一开始就提交，看处理完一批的总时间。Agentix 缩短 10% 到 40%[[makespan]]。4000 个程序时 MLFQ 跑不完：新调用都进最高队列，活跃调用太多，频繁交换导致内存耗尽，尽管交换空间超过 1.2 TB[[oom]]。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 17</span><span class="fn">Fig. 18</span>时间构成与交换函数</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig17.png" alt="ShareGPT 和 LATS 上的执行、调度、交换、等待时间构成" loading="lazy"></button>
+      </figure>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentix/fig18.png" alt="Agentix 与 vLLM 交换函数的交换耗时和吞吐" loading="lazy"></button>
+      </figure>
+      <p>Fig. 17：Agentix 的延迟降低来自等待时间（程序级调度）和交换时间（新的交换函数）；抢占使 Agentix 和 MLFQ 的调度开销都高于 FCFS，但 Agentix 仍好于 MLFQ。Fig. 18：把 KV 块合并成一次传输，交换次数最多少 18 倍、交换时间少 3 到 7 倍，吞吐是 vLLM 原有函数的 1.3 倍[[swap]]。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>Agentix 把服务的对象从单个模型调用改为整个程序：用会话和进程表记录每个程序的累计服务时间，单线程程序用 PLAS、多线程程序用 ATLAS 排定优先级，离散成多级队列并按程序级的等待比例防止饿死；多引擎时短调用做负载均衡，长调用固定到程序所在的引擎以保留前缀缓存。不需要预先知道程序的结构和长度。</p>
+    <p>在聊天、ReAct 工具调用、蒙特卡洛树搜索和混合负载上，相同延迟下的程序吞吐比优化过的 vLLM 高 2 到 5 倍，尾延迟在多数场景下也更低。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，论文把等待外部中断的时间排除在问题之外，实验部分也没有说明工具调用和人的等待时间怎样设置；ShareGPT 是把整段对话连续重放。而智能体在工具调用期间要不要保留 KV 缓存、长时间中断后程序还算不算“已用很多服务”，这些都没有涉及。第二，优先级只看已用的服务时间，没有区分程序的截止时间或用户的延迟要求。第三，按已用服务时间降级会系统性地延后长程序，平均延迟和尾延迟之间的取舍依赖阈值 β，论文没有给出 β 的敏感度分析。第四，基础引擎是 vLLM v0.6.1，与当时打开前缀缓存的 vLLM-opt 比较，没有与 SGLang 等已有的缓存感知调度直接比较。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码（第 1 页为 USENIX 封面），编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="runtime"><blockquote lang="en">We assume that the LLM invocation pattern of programs emerges only at runtime, making it difficult to fully know or predict the entire graph in advance</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="ignore"><blockquote lang="en">existing LLM serving systems ignore dependencies between programs and calls, missing significant opportunities for optimization.</blockquote><p class="loc">摘要，第 2 页</p></li>
+      <li data-key="prog-hol"><blockquote lang="en">However, without program-level context, newer programs are repeatedly delayed by subsequent calls from older programs, incurring program-level HoL blocking.</blockquote><p class="loc">§1，第 3 页</p></li>
+      <li data-key="scope"><blockquote lang="en">Since component (3) is unrelated to LLM serving, this section identifies problems and opportunities to reduce waiting (§3.1) and execution times (§3.2)</blockquote><p class="loc">§3，第 5 页</p></li>
+      <li data-key="wait"><blockquote lang="en">the majority of a program’s time is spent waiting as load increases.</blockquote><p class="loc">§3.1，第 5 页</p></li>
+      <li data-key="plus10"><blockquote lang="en">Compared to vLLM’s first-come, first-served (FCFS) policy, Agentix consistently handles 10 additional concurrent LLM calls</blockquote><p class="loc">§3.1，第 6 页</p></li>
+      <li data-key="locality"><blockquote lang="en">Notably, within a single program, cache-hit rates remain above 90% across all input lengths</blockquote><p class="loc">§3.2，第 6 页</p></li>
+      <li data-key="nonclair"><blockquote lang="en">Agentix is non-clairvoyant; it assumes no knowledge of program arrivals, the structure of executed workflows, or general workload distributions.</blockquote><p class="loc">§4.1，第 7 页</p></li>
+      <li data-key="atlas"><blockquote lang="en">For multi-threaded programs, it is the longest observed critical path’s execution time.</blockquote><p class="loc">§4.2.1，第 8 页</p></li>
+      <li data-key="atlas-simple"><blockquote lang="en">This simple mechanism continuously refines the program’s critical path estimate without tracking dependencies between LLM calls.</blockquote><p class="loc">§4.2.1，第 8 页</p></li>
+      <li data-key="rr"><blockquote lang="en">scheduling and preempting programs based on continuous priorities can degrade into worst-case round-robin scheduling [14]</blockquote><p class="loc">§4.2.2，第 9 页</p></li>
+      <li data-key="starve"><blockquote lang="en">Simple anti-starvation techniques—such as promoting calls that have waited past a threshold—reduces Agentix to naive MLFQ</blockquote><p class="loc">§4.2.2，第 9 页</p></li>
+      <li data-key="short"><blockquote lang="en">requests below 2048 tokens achieve high cache hit rates (≥ 75%) across any engine, due to common system prompts</blockquote><p class="loc">§4.3，第 10 页</p></li>
+      <li data-key="impl"><blockquote lang="en">Agentix builds on vLLM v0.6.1 [36]. To keep changes localized, we modify only the scheduler</blockquote><p class="loc">§5，第 10 页</p></li>
+      <li data-key="sharegpt"><blockquote lang="en">Our experiments replay entire conversations as a program rather than the first turn.</blockquote><p class="loc">§6.1，第 10 页</p></li>
+      <li data-key="poisson"><blockquote lang="en">we synthesize a trace by randomly sampling programs, not LLM calls, from the above workloads and generating programs’ arrivals using a Poisson process λ</blockquote><p class="loc">§6.1，第 11 页</p></li>
+      <li data-key="metric"><blockquote lang="en">we introduce program-level token latency, defined as the average of total program response time divided by the number of tokens</blockquote><p class="loc">§6.2，第 11 页</p></li>
+      <li data-key="single"><blockquote lang="en">Agentix achieves up to 8× vLLM, 2× vLLM-opt, and 1.5× MLFQ throughput at high load.</blockquote><p class="loc">§6.3，第 12 页</p></li>
+      <li data-key="mixed"><blockquote lang="en">on Mixed workloads, Agentix delivers up to 15×, 5.5×, and 5× higher throughput than vLLM, MLFQ, and vLLM-opt respectively</blockquote><p class="loc">§6.3，第 12 页</p></li>
+      <li data-key="mlfq-tail"><blockquote lang="en">For ShareGPT, MLFQ significantly improves average latency compared to vLLM-opt (Fig. 12), but exhibits poor P95/99 tail latencies.</blockquote><p class="loc">§6.3，第 12 页</p></li>
+      <li data-key="tail"><blockquote lang="en">In 7 of 8 scenarios, Agentix maintains consistently lower tail latencies than MLFQ and vLLM-opt</blockquote><p class="loc">§6.3，第 12 页</p></li>
+      <li data-key="lb"><blockquote lang="en">Agentix delivers up to 1.4× higher throughput compared to naive baselines while closely matching Preble’s performance</blockquote><p class="loc">§6.4，第 12 页</p></li>
+      <li data-key="makespan"><blockquote lang="en">decreasing the average makespan by 10-40%.</blockquote><p class="loc">§6.5，第 13 页</p></li>
+      <li data-key="oom"><blockquote lang="en">At 4000 programs, MLFQ fails to complete execution.</blockquote><p class="loc">§6.5，第 13 页</p></li>
+      <li data-key="swap"><blockquote lang="en">reducing swaps by up to 18x, swap times by 3-7x, and achieving 1.3x higher throughput than vLLM’s implemented kernel (Fig. 18).</blockquote><p class="loc">§6.5，第 13 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

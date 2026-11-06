@@ -13,7 +13,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-PAPERS = ["overview", "agentboard", "deltabox", "llmservingsim", "agentservesim", "cost-of-reasoning", "crab"]
+PAPERS = [
+    "overview", "agentboard", "deltabox", "llmservingsim", "agentservesim", "cost-of-reasoning", "crab",
+    "agentsysbench", "sessions", "xperf", "murakkab", "agentix", "conserve", "cachescout",
+    "simthesizer", "specbox", "yolofs", "safe-resume", "briefs",
+]
 
 QUOTES_RE = re.compile(r'(<ol class="quotes">)(.*?)(</ol>)', re.S)
 ITEM_RE = re.compile(r'<li data-key="([^"]+)">(.*?)</li>', re.S)

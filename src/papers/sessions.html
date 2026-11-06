@@ -1,0 +1,323 @@
+<article class="view frame paper" id="view-sessions" data-paper="sessions" hidden>
+
+<header class="masthead">
+  <h1 lang="en">From Requests to Sessions: A Large-Scale Characterization of Human-Driven Agentic Workloads</h1>
+  <p class="zh">从请求到会话：人类驱动的智能体负载的大规模刻画</p>
+  <p class="by">William Nixon、Muxin Tian、Yunjia Zheng、Haryadi S. Gunawi、Juncheng Yang，芝加哥大学、哈佛大学、多伦多大学</p>
+  <div class="meta">
+    <span class="venue">2026，论文与数据集发布于 opendata.agentic-system.org</span>
+    <div class="crumb"><span>计算机系统</span><span>智能体服务</span><span>生产负载刻画</span><span>前缀缓存</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2><span class="src">§1、§2.2、Table 2</span></div>
+    <div class="tree">
+      <div>大模型推理负载的刻画</div>
+      <div style="--d:1">通用推理与聊天的生产轨迹：BurstGPT、ServeGen、Mooncake 等</div>
+      <div style="--d:1">重放基准测智能体：SWE-Bench、Terminal-Bench 等</div>
+      <div style="--d:1">客户端日志：TraceLab、CacheWise、Copilot、SWE-chat</div>
+      <div style="--d:2" class="on"><b>推理服务一侧、13 种智能体框架的编程会话：本文</b></div>
+    </div>
+    <p>编程智能体正在成为大模型推理的一大流量来源，但已有的负载研究主要看通用请求和聊天，看不到会话一级的结构。用基准刻画智能体的工作，跑的是预先设定的任务，能否代表生产中真实的使用方式并不清楚[[bench-gap]]。已有的生产数据多是客户端日志，覆盖一两种智能体框架。</p>
+    <p>本文的数据来自免费推理服务 FreeInference，在服务端记录：3.7 个月、2092 亿输入 token、12000 多个会话、13 种智能体框架（harness）[[scale]]。服务端能看到每次请求的完整输入和缓存命中，所以可以分析上下文怎样变化、缓存应该留多久。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>会话、轮、步：三层单位</h2><span class="fn">Fig. 1</span><span class="src">§2.1</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/sessions/fig1.png" alt="编程智能体的执行层级：会话由用户轮组成，轮内是模型与工具的循环" loading="lazy"></button>
+      </figure>
+      <dl class="defs">
+        <dt>session（会话）</dt><dd>用户与智能体的一整段交互，包含一个或多个轮，上下文一路累积。轮与轮之间是用户闲置时间。</dd>
+        <dt>turn（轮）</dt><dd>由一条用户提示开始，智能体自己进入“模型、工具”循环，直到给出最终回复、把控制权交还用户。</dd>
+        <dt>step（步）</dt><dd>一次模型请求。第一步由用户提示触发，之后每一步由工具结果触发。</dd>
+      </dl>
+    </div>
+    <dl class="defs">
+      <dt>harness</dt><dd>智能体框架，如 Claude Code、Codex、OpenCode。它拼装每次请求、执行工具、把结果放回上下文，也负责压缩上下文。</dd>
+      <dt>前缀缓存与 TTL</dt><dd>新请求开头与已缓存内容相同的部分可以跳过 prefill；缓存保留多久由存活时间（TTL）决定，过期即被淘汰。</dd>
+      <dt>context mutation</dt><dd>本文的术语：相邻两次请求之间，前一次的上下文没有原样保留（被改写、截断或压缩），区别于只在末尾追加的 append。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">数据</span><h2>数据集与会话重建</h2><span class="fn">Table 1</span><span class="src">§3</span></div>
+    <div class="figgrid">
+      <div class="tbl"><table>
+        <thead><tr><th>harness</th><th class="r">会话</th><th class="r">输入 token</th><th>harness</th><th class="r">会话</th><th class="r">输入 token</th></tr></thead>
+        <tbody>
+          <tr><td>Hermes</td><td class="r n">3953</td><td class="r n">43.1B</td><td>OpenCode</td><td class="r n">1733</td><td class="r n">44.2B</td></tr>
+          <tr><td>Pi</td><td class="r n">1499</td><td class="r n">61.2B</td><td>Kilo</td><td class="r n">797</td><td class="r n">8.5B</td></tr>
+          <tr><td>Codex</td><td class="r n">763</td><td class="r n">6.1B</td><td>Oh-My-Pi</td><td class="r n">719</td><td class="r n">17.4B</td></tr>
+          <tr><td>Claude Code</td><td class="r n">639</td><td class="r n">8.9B</td><td>Copilot</td><td class="r n">295</td><td class="r n">5.8B</td></tr>
+          <tr><td>Zcode</td><td class="r n">197</td><td class="r n">9.4B</td><td>OpenClaw</td><td class="r n">189</td><td class="r n">1.0B</td></tr>
+          <tr><td>Cline</td><td class="r n">86</td><td class="r n">1.3B</td><td>Zoo</td><td class="r n">75</td><td class="r n">0.4B</td></tr>
+          <tr><td>OpenHands</td><td class="r n">22</td><td class="r n">0.1B</td><td>SWE-Bench（对照）</td><td class="r n">1035</td><td class="r n">1.8B</td></tr>
+        </tbody>
+      </table></div>
+      <div>
+        <p>合计 1186582 次请求、1213347 次工具调用；输入 2092 亿 token，其中 1971 亿命中缓存，输出只有 5.5 亿。一次 SWE-Bench 重放单独保留，用来和人的使用作对比，其余分析都不含它。只分析事先同意数据用于研究的用户。</p>
+        <p><b>会话要重建。</b>推理 API 是无状态的，多数框架不发送会话标识。按“后一个请求包含前一个请求的完整输入”去串联会在框架改写上下文时切得太碎，所以改为看后一个请求的历史里是否回放了前一次的模型输出（工具调用按调用 ID 匹配）。在自带会话标识的框架上检验，95% 的重建会话与框架给的会话一一对应[[recon]]。重建时不设闲置上限，以免把长时间离开后继续的会话切开。</p>
+      </div>
+    </div>
+    <p>两个测量口径需要先说明。模型的延迟：转发到外部服务商的请求，用服务商报告的数字，所以 TTFT 可能包含对方内部的缓冲和排队[[ext-lat]]。工具的延迟：服务端看不到工具本身，用“模型回复结束到下一个带着工具结果的请求到达”的间隔，减去估计的网络往返[[tool-lat]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>会话结构：长时间存在、突发式活动、上下文越来越长</h2>
+    <p>先看一个会话由多少轮和步组成、持续多久（Fig. 2a、b），再看 token 和费用（Fig. 2c、d，Fig. 3），最后看时间花在哪里（Fig. 4）。对应论文的发现 1 和 2。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>步数、时长、每次请求的 token、费用构成</h2><span class="fn">Fig. 2</span><span class="src">§4.1、§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig2.png" alt="(a) 每会话的步数；(b) 轮与会话时长；(c) 每次请求的 token；(d) 每会话的费用构成" loading="lazy"></button>
+    </figure>
+    <div class="pair">
+      <div>
+        <h3>(a)(b) 会话由模型和工具驱动，跨越数小时</h3>
+        <p>每个会话中位数只有 4 步来自用户，却有 42 次模型请求和 36 次工具调用，模型与工具几乎一比一交替。一轮中位数约 1 分钟，一个会话中位数 30 分钟，长了约 30 倍[[turn-session]]；最长的 10% 会话超过 7.7 小时。差距主要来自轮与轮之间用户的思考、输入或离开。</p>
+      </div>
+      <div>
+        <h3>(c)(d) 输入很长，新增很少，缓存读取占了费用大头</h3>
+        <p>每次请求的输入中位数约 129K token，未命中缓存的只有约 500 个，输出约 200 个[[req-tokens]]。按 Claude Fable 5 的价格（缓存读取、普通输入、输出每百万分别 1、10、50 美元），缓存命中的输入占全部 token 的 97.4%、费用的 72.9%。缓存读取单价只有普通输入的十分之一，但量太大，仍是费用的主体。</p>
+      </div>
+    </div>
+    <p>由此，按原始输入长度看，智能体请求像是 prefill 很重的负载，实际上每次真正要算的新输入很少。论文的建议也落在这里：服务方应降低提供缓存读取的成本；框架应设法减少步数，而不是减少每轮的输入；用户比较价格时要看缓存读取的单价。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>上下文怎样增长、由什么组成</h2><span class="fn">Fig. 3</span><span class="src">§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig3.png" alt="(a) 随步数变化的 token；(b) 上下文中各类内容的占比" loading="lazy"></button>
+    </figure>
+    <p>(a) 前几步未命中的输入中位数约 10K token，来自很长的系统提示和对代码仓库的初次探索，之后降到 1K 左右并继续下降。已缓存的前缀从几千增长到几十万，但增长变慢：前十步每步约增加 2.5K，过了一百步只增加约 330[[growth]]。输出始终约 200。</p>
+    <p>(b) 早期以系统提示为主；随后工具结果迅速累积，助手消息和工具历史合起来从第 10 步的 32% 增长到第 1000 步的 92%。在长会话里工具历史先达到峰值再下降，助手消息则持续增长，最终成为最大的一块。原因是框架的常见做法：删掉旧的工具输出，保留助手消息和其中的工具调用[[prune]]。这也意味着上下文并不总是只增不减，后面的 context mutation 一节会量化这件事。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>时间花在哪里</h2><span class="fn">Fig. 4</span><span class="src">§4.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig4.png" alt="(a)(b) 两个外部模型的 prefill、decode、排队时间；(c) 会话时间构成；(d) 各部分加速一倍的效果" loading="lazy"></button>
+    </figure>
+    <p><b>单次请求看 TTFT，TTFT 主要是排队。</b>(a)(b) 是两个转发到外部的模型。纯 prefill 的速度约每秒 8K token，而中位数请求未命中的输入不到 1K，纯 prefill 通常不到 0.1 秒；中位数约 4 秒的 TTFT 大部分是服务开销[[ttft]]。</p>
+    <p><b>整个会话看，大部分时间不在模型上。</b>(c) 平均而言，用户闲置占会话时间的 50.3%，工具执行 21.7%，decode 18.1%，prefill 9.9%[[breakdown]]。decode 多于 prefill，因为多数请求由本地模型服务，排队少、前缀复用高[[local]]。(d) 去掉用户闲置、每段工具间隔最多算 15 分钟，再假设某一部分快一倍：工具快一倍整体快 1.38 倍，prefill 和 decode 快一倍只快 1.09 倍和 1.16 倍[[whatif]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>工具：用得最多的是什么，花时间的是什么，能否并行</h2>
+    <p>工具按用途归类：框架自带的原生工具（Read、Edit 等）占调用的 47%，shell 命令占 53%，shell 命令按实际执行的程序归入 Interpreter、Search、File Ops 等类。对应发现 3 和 4。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>各类工具的调用量、耗时和输出大小</h2><span class="fn">Table 5</span><span class="fn">Fig. 5</span><span class="src">§5.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig5.png" alt="Table 5 工具类别统计与 Fig. 5 各类工具的延迟和输出 token 分布" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>Table 5 的列</th><th class="wrap">含义</th></tr></thead>
+      <tbody>
+        <tr><td>Calls、Sess.</td><td class="wrap">占全部工具调用的比例；出现过这类工具的会话占比</td></tr>
+        <tr><td>Tokens、Time</td><td class="wrap">工具结果写进上下文的 token 占比；工具等待时间占比</td></tr>
+        <tr><td>Fail</td><td class="wrap">这类调用的失败率</td></tr>
+        <tr><td>Batched Same、Mixed</td><td class="wrap">在一次模型回复里与同类工具、与其他工具一起发出的比例</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>调用次数不等于开销。</b>Read、Interpreter、Edit、Search、File Ops 五类占调用的 60% 以上。但 Read 只占 16% 的调用，却贡献了 34% 的结果 token[[read34]]；Interpreter 占 12% 的调用、17% 的等待时间；Ask User（向用户提问）只占 0.4% 的调用，却占 5.8% 的等待时间。</p>
+    <p><b>多数很快，尾部很长。</b>(a) 读、改、搜这类本地操作中位数 0.9 到 1.7 秒；执行类更慢，Interpreter 2.8 秒、Build/Test 7.2 秒、Wait/Poll 11.7 秒；Subagent 中位数 13 秒、平均 100 秒，Ask User 要几分钟。均值远大于中位数，例如 Read 中位数不到 1 秒、均值 13.2 秒，部分尾部可能来自需要人工批准的命令[[approval]]。(b) Read 的结果中位数 441 token，Edit、Write 不到 50 token。类别能提供调度线索，但类内差异很大，只按工具类型预测并不可靠。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>并行调用工具很少用</h2><span class="fn">Fig. 6</span><span class="fn">Table 6</span><span class="src">§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig6.png" alt="(a) 串行与批量调用的完成时间随调用数变化；(b) 各类工具每次请求的调用数" loading="lazy"></button>
+    </figure>
+    <p>(a) 串行时，每多一个工具调用就多一次“模型回复加工具执行”的往返，完成时间大致线性增长；一次回复里批量发出时，完成时间几乎不随调用数增长[[batched]]，P90 在 14 到 28 秒。但 84.5% 的请求只发出一个工具调用[[one-call]]，发出四个以上的只占 3%。67% 的会话至少批量调用过一次，批量调用中 71% 是一类工具的重复调用，主要是 Subagent、Browser、Read 这类只读操作；Edit、Write 很少一起发。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>子智能体：少用、多为同步、有拖尾</h2><span class="fn">Fig. 7</span><span class="src">§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig7.png" alt="同步子智能体中最慢者与其他兄弟的比值" loading="lazy"></button>
+    </figure>
+    <p>只有 10.4% 的会话用了子智能体，80.6% 的调用只派出一个；67% 是同步的，父智能体等子智能体完成，只拿回最终结果。同时派出多个时，最慢的一个常比中位数慢 50%，比最快的慢 3 倍以上[[straggler]]，差距主要来自工具执行时间。(b) 按角色分工（如审阅、编辑、安全专家）比按工作量分工（如每个子智能体负责一个文件）更不均衡[[role]]，因为不同角色要做的工具工作差别更大。</p>
+  </section>
+
+  <div class="band">
+    <h2>前缀缓存：命中靠什么维持，什么在破坏它，应该保留多久</h2>
+    <p>依次看生产中的命中率与请求间隔的关系（Fig. 8）、上下文改写的影响（Table 7、Fig. 9），再用重放模拟比较不同 TTL 的重算量、存储量和费用（Fig. 10 到 Fig. 13）。对应发现 5 到 7。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>间隔越长，命中越低；服务商的保留时间各不相同</h2><span class="fn">Fig. 8</span><span class="src">§6.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig8.png" alt="(a) 按请求间隔分组的命中率；(b) 不同服务商的命中率随间隔变化；(c) 各类间隔的长度；(d) 各类间隔后的平均命中率" loading="lazy"></button>
+    </figure>
+    <div class="pair">
+      <div>
+        <h3>(a)(b) 生产中实际的保留时间</h3>
+        <p>间隔在一分钟内命中率很高；15 到 30 分钟降到约 58%，超过一小时只有 18%[[gap-hit]]。(b) 对比服务相同开源模型的几家服务商：D 在 15 分钟后中位命中率就低于 50%，B 在 30 分钟后，A 到一小时仍很高；有的在某个时间点骤降（像是按时间淘汰），有的逐渐下降（像是按负载淘汰）。保留策略通常不公开，却直接决定用户的花费[[opaque]]。</p>
+      </div>
+      <div>
+        <h3>(c)(d) 哪种间隔造成了未命中</h3>
+        <p>普通工具间隔占全部间隔的 92.7%，中位数 1.8 秒，P90 也只有 17.2 秒。Ask User、子智能体和用户闲置的 P90 分别是 6.3、6.2 和 17.4 分钟。工具间隔后的平均命中率 97.5%，用户闲置后只有 84%[[cause-hit]]。现有的保留策略已经覆盖了模型与工具循环内部的复用，剩下的问题在用户离开的那段时间。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>上下文改写：每步少见，每个会话常见</h2><span class="fn">Table 7</span><span class="fn">Fig. 9</span><span class="src">§6.2</span></div>
+    <div class="figgrid">
+      <div class="tbl"><table>
+        <thead><tr><th>相邻请求的变化</th><th class="r">步</th><th class="r">会话</th><th class="r">新 prefill</th></tr></thead>
+        <tbody>
+          <tr><td>只追加</td><td class="r n">96.00</td><td class="r n">43.6</td><td class="r n">37.5</td></tr>
+          <tr class="me"><td>改写，合计</td><td class="r n">4.00</td><td class="r n">56.4</td><td class="r n">62.5</td></tr>
+          <tr><td>注入运行时信息</td><td class="r n">0.96</td><td class="r n">17.1</td><td class="r n">7.4</td></tr>
+          <tr><td>改系统提示</td><td class="r n">0.74</td><td class="r n">20.3</td><td class="r n">26.9</td></tr>
+          <tr><td>改工具定义</td><td class="r n">0.40</td><td class="r n">21.4</td><td class="r n">13.9</td></tr>
+          <tr><td>丢弃旧轮次</td><td class="r n">0.36</td><td class="r n">6.5</td><td class="r n">5.3</td></tr>
+          <tr><td>压缩</td><td class="r n">0.04</td><td class="r n">3.7</td><td class="r n">0.6</td></tr>
+          <tr><td>删改工具结果</td><td class="r n">0.51</td><td class="r n">5.9</td><td class="r n">3.2</td></tr>
+          <tr><td>其他</td><td class="r n">1.00</td><td class="r n">14.5</td><td class="r n">5.2</td></tr>
+        </tbody>
+      </table></div>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/sessions/fig9.png" alt="追加之后与改写之后那一步的命中率分布" loading="lazy"></button>
+        <figcaption><span class="fig-no">Fig. 9</span>追加之后的一步几乎全部命中，改写之后的一步命中率分布很散。</figcaption>
+      </figure>
+    </div>
+    <p class="cap">Table 7 的三列分别是：这类变化占全部步的比例、出现过它的会话占比、假设缓存永不过期时它造成的新 prefill 占比（%）。</p>
+    <p>改写只占 4% 的步，却出现在 56.4% 的会话里，在缓存永不过期的假设下造成 62% 的新 prefill，“智能体上下文只增不减”的假设并不成立[[mutation]]。用户提示只占全部步的 6.4%，却占改写步的 35.4%，框架常在新一轮开始时改写上下文[[user-mut]]。影响大小取决于改在哪里：工具定义一般排在系统提示之前，哪怕小改动也会让几乎整段缓存失效[[tooldef]]；注入的运行时信息在提示末尾，次数多但只损失一小段。还有一些是可以避免的，例如把结构化的工具输出重新序列化成不同的 JSON。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">模拟</span><h2>TTL 越长，重算越少，死块越多</h2><span class="fn">Fig. 10</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig10.png" alt="(a) 新 prefill 与平均保留 token 的权衡；(b) 保留的可复用块和死块相对活跃块的倍数" loading="lazy"></button>
+    </figure>
+    <p>把重建的请求流按 16 token 一块做哈希，重放进一个模拟的前缀缓存，改变 TTL[[sim]]。(a) 纵轴是新 prefill 相对“永不过期”的倍数，横轴是平均保留的 token。15 分钟时，新 prefill 仍比下限高 60.9%[[ttl15]]；30 分钟高 35%，1 小时 21%，6 小时 7%，1 天约 1%。存储则从 15 分钟到 1 天增加到 25.6 倍。(b) 把保留的块分为之后会被用到的可复用块，和会话已结束或上下文已改写、再也不会用到的死块：TTL 越长，死块增长得比可复用块快得多，1 天时约为活跃块的 120 倍。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">模拟</span><h2>按费用看，15 到 30 分钟最划算</h2><span class="fn">Fig. 11</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig11.png" alt="(a) 用户 API 费用随 TTL 变化；(b) 服务商的重算与存储成本随 TTL 变化" loading="lazy"></button>
+    </figure>
+    <p>费用以 TTL 1 分钟时为 1。(a) 用户的 API 费用按 Claude Fable 5 价格计，15 分钟内迅速下降，之后基本持平，30 分钟时已在最低值的 4% 以内。(b) 服务商的成本把重算按每百万 token 1 美元、存储按每百万 token 每天 30 美元计算，后者依据 AWS 内存价格和 70B GQA 模型 FP16 下每 token 320 KB 的 KV 缓存[[infra]]。在 15 分钟处最低，为 0.42 倍，之后存储的增加超过了重算的节省。这就是摘要里“15 分钟规则”的来源。</p>
+    <p class="mine"><b>本页说明：</b>15 分钟这个最优点由两个假设的价格之比决定。存储价格按内存计，如果 KV 缓存可以放到更便宜的 SSD 或分层存储上，最优 TTL 会向更长的方向移动；反过来，显存紧张时会更短。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">模拟</span><h2>降低缓存读取价格，未必减少重算和费用</h2><span class="fn">Fig. 12</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig12.png" alt="缓存读取价格下降、框架减少改写后的 prefill 和 API 费用变化" loading="lazy"></button>
+    </figure>
+    <p>框架改写上下文常常是为了缩短它、省钱。如果缓存读取更便宜，框架可能少做缩短上下文的改写。论文假设这类改写随读取价格从每百万 1 美元降到 0 而线性减少，上下文最多长到 1M token。结果是：TTL 为 15 分钟时新 prefill 最多反而增加约 5%，5 分钟时约 10%，因为上下文更长，一旦未命中要重算的也更多；只有读取几乎免费时才划算[[free]]。API 费用也一样：即使缓存永不过期，读取价格要低到每百万约 0.05 美元，多读的量才不超过省下的 prefill。结论是缩短上下文的改写有它的作用，带状态的 API 也应提供压缩这类控制上下文的手段。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">模拟</span><h2>让框架告诉服务端何时释放</h2><span class="fn">Fig. 13</span><span class="src">§6.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig13.png" alt="加入改写和结束信号后，死块数量和服务商成本随 TTL 的变化" loading="lazy"></button>
+    </figure>
+    <p>长 TTL 下的死块像内存泄漏：框架一直在分配 KV 块，却从不调用 free()[[leak]]。模拟两个信号：mutate 表示某次改写使哪些块失效，end 表示会话结束、它的块全部释放。两者都用时，TTL 为 1 天的累积存储最多减少 36 倍[[reclaim]]，服务商成本在很长的 TTL 下也能保持很低。论文进一步建议框架提供 pause（可以卸载）、resume（可以预取）这类会话生命周期的提示。</p>
+  </section>
+
+  <div class="band">
+    <h2>基准重放与真实使用的差别</h2>
+    <p>拿在这个服务上跑的 SWE-Bench 重放（1035 个会话）与人驱动的会话比较时长、上下文、缓存需求（Fig. 14）、工具使用（Fig. 15）和用户意图（Fig. 16）。对应发现 8。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>基准会话更短、上下文更小、缓存只需几分钟</h2><span class="fn">Fig. 14</span><span class="src">§7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig14.png" alt="基准重放与人驱动会话在轮时长、会话时长、每次请求输入、用户提示长度、缓存权衡上的对比" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>指标（中位数）</th><th class="r">人驱动</th><th class="r">SWE-Bench</th><th class="wrap">原因</th></tr></thead>
+      <tbody>
+        <tr><td>(a) 一轮的时长</td><td class="r n">61 秒</td><td class="r n">188 秒</td><td class="wrap">基准只给一个问题，智能体连续工作到结束</td></tr>
+        <tr><td>(b) 一个会话的时长</td><td class="r n">30.2 分钟</td><td class="r n">192 秒</td><td class="wrap">人会话有多轮，中间有闲置</td></tr>
+        <tr><td>(c) 每次请求的输入</td><td class="r n">129.1K</td><td class="r n">25.4K</td><td class="wrap">多轮使上下文持续增长</td></tr>
+        <tr><td>(d) 用户提示长度</td><td class="r n">42</td><td class="r n">1.4K</td><td class="wrap">基准的问题描述长而统一，人发的提示短而多变</td></tr>
+      </tbody>
+    </table></div>
+    <p>(e) 两者用相同的 TTL 模拟器重放：SWE-Bench 在 TTL 1 分钟时比下限高 26%，5 分钟就几乎拿到全部复用；人驱动的会话 15 分钟仍高 61%，要约一天[[bench-ttl]]。SWE-Bench 里也没有上下文改写。只用基准评估服务系统，会低估真实环境对缓存存储和保留时间的需求。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>工具使用：基准分阶段，人的会话更杂</h2><span class="fn">Fig. 15</span><span class="src">§7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig15.png" alt="一轮之中各类工具占比随进度的变化：SWE-Bench 与人驱动会话" loading="lazy"></button>
+    </figure>
+    <p>横轴是一轮内的进度。SWE-Bench 先读和搜（探索代码仓库），后执行、构建测试和提交，阶段分明。人驱动的会话里 Read 始终占不小的比例，修改和执行到后面才增多，还更多地用到浏览器等其他工具，阶段没有那么清楚。比较前把工具合并成八大类，因为 SWE-Bench 的智能体只能通过 shell 命令工作。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>用户意图：先布置任务，再引导执行</h2><span class="fn">Fig. 16</span><span class="src">§7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/sessions/fig16.png" alt="(a) 各轮的用户意图构成；(b) 相邻两轮意图的转移" loading="lazy"></button>
+    </figure>
+    <p>用大模型给 1800 个会话中约 1 万轮的用户提示打标签，分八类：Create 新建、Extend 扩展、Refine 修改、Debug 调试、Explain 解释、Steer 推动（如“继续”“好”）、Setup 配置环境、Other。第一轮中 Create 占 35%[[create]]，之后迅速下降，Steer、Refine、Extend 增多，三者合计占第一轮之后的 46%。(b) 是转移矩阵，Steer、Debug、Explain 常连续出现。这种局部性可以帮助框架判断任务边界：用户转向不相关的工作时，建议开一个新会话，避免上下文无谓增长。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>从推理服务一侧看，编程智能体的负载以长时间存在的会话为单位：模型与工具的循环密集而快速，轮与轮之间是长时间的用户闲置；上下文越来越长，每次只新增几百 token，缓存读取成为费用的主体；会话中的时间主要花在用户闲置和工具执行上。前缀复用在循环内部已经很高，破坏它的是用户离开的时间和框架对上下文的改写。</p>
+    <p>对缓存保留，论文的建议是以会话为管理单位：在循环活跃时优先保留；按两种成本取舍时 15 分钟左右最划算；让框架提供改写、暂停、恢复、结束等生命周期信号，及早回收死块，才能把保留时间做长。评估服务系统时，只用基准重放会低估这些需求。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>论文承认的局限：数据在推理服务端采集，拿不到客户端的精确工具执行时间，工具时间还受用户设备影响[[limit-tool]]；会话是重建的，可能和客户端定义的会话不完全一致；FreeInference 是免费服务，不限制使用方式，负载很杂，结论不一定推广到受控的服务[[limit-gen]]。</p>
+    <p class="mine"><b>本页说明：</b>工具时间按两次请求的间隔计算，因此包含了等待用户批准命令的时间（论文在讨论长尾时也提到这一点），“工具执行占会话时间 21.7%”和“工具快一倍整体快 1.38 倍”都带着这部分人的时间。外部模型的 TTFT 也包含服务商一侧的排队，本地和外部模型混在一起统计。TTL 和费用的结论来自重放模拟，假设命中只取决于 TTL，没有考虑容量上限下的淘汰。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="scale"><blockquote lang="en">we study 3.7 months of production traffic from FreeInference, spanning 209B input tokens and 12K sessions across 13 agent harnesses</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="bench-gap"><blockquote lang="en">It therefore remains unclear whether workload characteristics observed in these benchmarks reflect how coding agents behave in production</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="recon"><blockquote lang="en">In this subset, 95% of reconstructed sessions match the harness-provided sessions one-to-one.</blockquote><p class="loc">§3，第 3 页</p></li>
+      <li data-key="ext-lat"><blockquote lang="en">For requests forwarded externally, we use the reported latency measurements. As a result, metrics such as TTFT may include internal buffering or queueing delays.</blockquote><p class="loc">§3，第 3 页</p></li>
+      <li data-key="tool-lat"><blockquote lang="en">We measure the effective latency of tools as the elapsed time between when the LLM finishes a response and the tool result returns (excluding the estimated network round-trip time).</blockquote><p class="loc">§5，第 5 页</p></li>
+      <li data-key="turn-session"><blockquote lang="en">The median user turn lasts about one minute, while the median session lasts 30 minutes, roughly 30× longer.</blockquote><p class="loc">§4.1，第 3 页</p></li>
+      <li data-key="req-tokens"><blockquote lang="en">The median request contains roughly 129K input tokens, yet only about 500 are uncached</blockquote><p class="loc">§4.2，第 4 页</p></li>
+      <li data-key="growth"><blockquote lang="en">it adds about 2.5K tokens per step over the first ten steps, and only about 330 per step after a hundred.</blockquote><p class="loc">§4.2，第 4 页</p></li>
+      <li data-key="prune"><blockquote lang="en">This divergence reflects a common harness policy: pruning older tool outputs while retaining assistant messages, including their tool calls.</blockquote><p class="loc">§4.2，第 4 页</p></li>
+      <li data-key="ttft"><blockquote lang="en">serving overheads account for most of the roughly 4 s median TTFT.</blockquote><p class="loc">§4.3，第 5 页</p></li>
+      <li data-key="breakdown"><blockquote lang="en">On average, user idle time accounts for 50.3% of session time, followed by tool execution at 21.7%, decode at 18.1%, and prefill at 9.9%.</blockquote><p class="loc">§4.3，第 5 页</p></li>
+      <li data-key="local"><blockquote lang="en">Decode dominates prefill because most requests are served by locally hosted models with little queueing and high prefix reuse.</blockquote><p class="loc">§4.3，第 5 页</p></li>
+      <li data-key="whatif"><blockquote lang="en">Halving tool latency yields a 1.38× speedup, far exceeding the 1.09× and 1.16× gains from halving prefill and decode time, respectively.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="read34"><blockquote lang="en">Read, for example, accounts for 34% of all result tokens despite representing only 16% of calls</blockquote><p class="loc">§5.1，第 6 页</p></li>
+      <li data-key="approval"><blockquote lang="en">Part of this tail may come from commands that require human approval under certain harness or user configurations.</blockquote><p class="loc">§5.1，第 6 页</p></li>
+      <li data-key="batched"><blockquote lang="en">In contrast, batched completion time remains nearly flat as batch width grows, with P90 latency of 14–28 s across various degrees of parallelism.</blockquote><p class="loc">§5.2，第 7 页</p></li>
+      <li data-key="one-call"><blockquote lang="en">Parallel tool execution reduces repeated LLM–tool round trips, yet 84.5% of requests issue only one tool call.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="straggler"><blockquote lang="en">the slowest sibling often takes 50% longer than the median sibling and more than 3× as long as the fastest.</blockquote><p class="loc">§5.2，第 7 页</p></li>
+      <li data-key="role"><blockquote lang="en">role-based fan-outs (e.g., reviewer, editor, and security experts) are more imbalanced than work-based fan-outs</blockquote><p class="loc">§5.2，第 7 页</p></li>
+      <li data-key="gap-hit"><blockquote lang="en">The hit ratio declines as the gap grows, to around 58% at 15–30 minutes and only 18% beyond an hour.</blockquote><p class="loc">§6.1，第 8 页</p></li>
+      <li data-key="opaque"><blockquote lang="en">Provider retention is therefore an important hidden driver of cache misses and user cost, as the underlying retention mechanism is often opaque to users.</blockquote><p class="loc">§6.1，第 8 页</p></li>
+      <li data-key="cause-hit"><blockquote lang="en">Ordinary tool calls maintain a high mean hit ratio of 97.5%, while reuse declines across Ask User calls, subagents, and especially user idle periods, reaching only 84% on average.</blockquote><p class="loc">§6.1，第 8 页</p></li>
+      <li data-key="mutation"><blockquote lang="en">Although only 4.0% of requests modify prior context, mutations occur in 56% of sessions, challenging the common assumption that agent context grows monotonically.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="user-mut"><blockquote lang="en">as user steps account for only 6.4% of all steps but 35.4% of mutated steps</blockquote><p class="loc">§6.2，第 9 页</p></li>
+      <li data-key="tooldef"><blockquote lang="en">Because tool definitions are typically rendered before the system prompt, even a small change invalidates nearly the entire cached prefix.</blockquote><p class="loc">§6.2，第 9 页</p></li>
+      <li data-key="sim"><blockquote lang="en">We replay the reconstructed request stream through a simulated prefix cache with varying time-to-live (TTL) values, using hashed 16-token blocks.</blockquote><p class="loc">§6.3，第 9 页</p></li>
+      <li data-key="ttl15"><blockquote lang="en">At 15 minutes, retention captures much of the available reuse, but new prefill remains 60.9% above the infinite-retention floor.</blockquote><p class="loc">§6.3，第 10 页</p></li>
+      <li data-key="infra"><blockquote lang="en">For infrastructure cost, we model recomputation at $1/M tokens and storage at $30/M token-days, based on AWS DRAM pricing and a 320 KB/token KV footprint for a 70B GQA model in FP16.</blockquote><p class="loc">§6.3，第 10 页</p></li>
+      <li data-key="free"><blockquote lang="en">This tradeoff is overcome only when reads become nearly free.</blockquote><p class="loc">§6.3，第 10 页</p></li>
+      <li data-key="leak"><blockquote lang="en">This resembles a memory leak, where harnesses effectively allocate KV blocks without providing an explicit free().</blockquote><p class="loc">§6.3，第 10 页</p></li>
+      <li data-key="reclaim"><blockquote lang="en">reduces accumulated storage by up to 36× at a one-day TTL.</blockquote><p class="loc">§6.3，第 11 页</p></li>
+      <li data-key="bench-ttl"><blockquote lang="en">For SWE-Bench, a 1-minute TTL remains 26% above the prefill floor, while 5 minutes captures nearly all reuse.</blockquote><p class="loc">§7，第 11 页</p></li>
+      <li data-key="create"><blockquote lang="en">Opening turns mainly establish what the agent should do, with Create accounting for 35% of first turns.</blockquote><p class="loc">§7，第 12 页</p></li>
+      <li data-key="limit-tool"><blockquote lang="en">Because we collected data at the inference service, we do not have access to precise client-side measurements of tool execution latency, and tool latency is also affected by users’ devices.</blockquote><p class="loc">§9，第 13 页</p></li>
+      <li data-key="limit-gen"><blockquote lang="en">FreeInference does not constrain agent usage patterns and behavior, resulting in a heterogeneous workload whose characteristics may not fully generalize to services with more controlled or restricted workloads.</blockquote><p class="loc">§9，第 13 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

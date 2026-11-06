@@ -1,0 +1,263 @@
+<article class="view frame paper" id="view-murakkab" data-paper="murakkab" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Murakkab: Resource-Efficient Agentic Workflow Orchestration in Cloud Platforms</h1>
+  <p class="zh">Murakkab：云平台上资源高效的智能体工作流编排</p>
+  <p class="by">Gohar Irfan Chaudhry、Esha Choukse、Haoran Qiu、Rodrigo Fonseca、Adam Belay、Ricardo Bianchini，MIT CSAIL、Microsoft Azure</p>
+  <div class="meta">
+    <span class="venue">OSDI 2026</span>
+    <div class="crumb"><span>计算机系统</span><span>云平台</span><span>工作流编排</span><span>资源调度</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>问题：三层配置各管各的</h2><span class="src">§1、§2.3、§2.4</span></div>
+    <p>智能体工作流把多个模型和工具组合起来完成一个任务。今天的做法是开发者用 LangGraph、LlamaIndex 等框架命令式地写出每一步用哪个模型、什么参数、多少 CPU 和 GPU；云平台只把智能体发来的推理请求当作普通 API 调用来自动扩缩。工作流对平台来说是一串不透明的调用，应用逻辑和模型、硬件选择绑死在一起[[opaque]]。</p>
+    <dl class="defs">
+      <dt>工作流级</dt><dd>用哪些智能体、怎样连接，例如要不要语音转文字这一步。</dd>
+      <dt>智能体级</dt><dd>每个智能体用哪个模型、什么参数，例如抽多少帧、辩论几轮。</dd>
+      <dt>硬件级</dt><dd>GPU 型号和数量、并行方式，CPU 还是 GPU。</dd>
+    </dl>
+    <p>三层各自优化，系统就无法追求端到端的目标，例如在满足每个请求的准确率要求的前提下成本最低，或在延迟约束下吞吐最高[[silo]]。论文的主张是在云平台上加一个控制面，把整个工作流（模型调用、工具执行、数据依赖）当作一张可以整体优化的计算图[[control]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>两个示例工作流</h2><span class="fn">Fig. 1</span><span class="src">§2.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig1.png" alt="(a) 视频问答工作流；(b) 代码生成工作流（LLM Debate）" loading="lazy"></button>
+    </figure>
+    <dl class="defs">
+      <dt>(a) 视频问答</dt><dd>多模态：切分场景、抽帧、语音转文字（STT）、目标检测，最后由多模态大模型回答关于视频的问题。</dd>
+      <dt>(b) 代码生成</dt><dd>纯文本，采用 LLM Debate：几个写代码的智能体提出方案，测试智能体生成并运行测试，辩论若干轮后由模型投票选出最终方案。</dd>
+      <dt>动态编程流水线</dt><dd>仿照 Claude Code，每个请求的执行结构不同：并行生成若干候选、按公开测试排序，可选审阅者，由一个编排模型按题目选择写代码的风格和投入多少计算。</dd>
+    </dl>
+    <p>另有一个数学问答工作流放在附录。这些工作流都可以写成有向无环图：节点是智能体，边是数据流和执行依赖。</p>
+  </section>
+
+  <div class="band">
+    <h2>动机：配置影响很大，空间又太大</h2>
+    <p>论文先用测量说明三点：工作流和智能体的设置决定准确率与开销（Fig. 2）；硬件设置决定延迟、吞吐和能耗（Fig. 3）；组合起来的配置空间大到无法手工选择（Fig. 4）。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>工作流和智能体设置：准确率与生成量</h2><span class="fn">Fig. 2</span><span class="src">§2.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig2.png" alt="(a)(b) 视频问答在不同帧数、是否 STT、不同模型下的准确率和生成 token；(c)(d) 代码生成在不同辩论者数、轮数、模型下的准确率和生成 token" loading="lazy"></button>
+    </figure>
+    <p>(a)(b) 视频问答：帧数（工作流内部智能体的参数）和要不要 STT（工作流结构）都明显影响准确率。Gemma-3-27B 用 10 帧、开 STT 时准确率最高，为 66.2%，生成的 token 也最多[[gemma]]；不同请求的生成量从 250 到近 1000 token，长尾明显。(c)(d) 代码生成：准确率随辩论者数和轮数变化；推理模型 DeepSeek-Qwen-32B 准确率最高，但中位数生成约 2 万 token，Gemma-3-27B 在相同设置下约 2500[[tokens]]。生成越多，延迟、费用和 GPU 负载越高。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>硬件设置：吞吐、延迟、能效的权衡</h2><span class="fn">Fig. 3</span><span class="src">§2.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig3.png" alt="几个模型在 A100、H100 和不同张量并行度下的 TTFT、TPOT 和每 Wh 吞吐" loading="lazy"></button>
+    </figure>
+    <p>每个小图是一个模型，曲线是 A100 或 H100 配 1 到 8 路张量并行，横轴是负载（吞吐），纵轴分别是 TTFT、TPOT 和每 Wh 的吞吐。没有一种配置在所有指标上都最好：并行度高延迟低，但每瓦吞吐未必高；H100 快且省电，但贵。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>配置空间：组合起来数不过来</h2><span class="fn">Fig. 4</span><span class="src">§2.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig4.png" alt="视频问答和代码生成的端到端配置在准确率与延迟、费用、能耗上的分布与 Pareto 前沿" loading="lazy"></button>
+    </figure>
+    <p>每个点是一个完整的端到端配置（模型、硬件、并行方式、工作流参数的组合），横轴分别是延迟、每请求费用、每请求能耗，纵轴是准确率，虚线是 Pareto 前沿。只调少数几个参数就已经有这么多点。配置空间随智能体个数和每个智能体的参数数目成倍增长，而用户目标各不相同，最优点还随流量、模型和资源的可用性变化，靠人工选择不现实。</p>
+  </section>
+
+  <div class="band">
+    <h2>设计：声明式描述、按画像优化、运行时调整</h2>
+    <p>Murakkab 管理工作流的整个生命周期，分三个阶段（Fig. 5）：开发阶段把描述变成逻辑工作流，优化阶段把它变成具体的可执行工作流和部署计划，执行阶段按请求的 SLO 运行并动态调整。各决策的频率见 Table 1。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>生命周期的三个阶段</h2><span class="fn">Fig. 5</span><span class="fn">Table 1</span><span class="src">§3.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig5.png" alt="(a) 开发阶段；(b) 优化与部署阶段；(c) 执行阶段" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>阶段</th><th class="wrap">决定什么</th><th>多久决定一次</th></tr></thead>
+      <tbody>
+        <tr><td>开发（编排器）</td><td class="wrap">工作流的 DAG 结构；每个节点由哪个执行器承担</td><td>上线时一次；动态请求每次</td></tr>
+        <tr><td>优化（优化器）</td><td class="wrap">每个执行器最终用哪个模型或工具、GPU 型号与并行方式、工作流参数、每个模型的实例数</td><td>每个优化周期</td></tr>
+        <tr><td>执行</td><td class="wrap">扩容和缩容、batch 组成、每个请求发往哪个实例</td><td>持续进行或每个请求</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>开发：只写任务和数据流</h2><span class="src">§3.2</span></div>
+    <p>论文对比了两种写法。原来（Listing 1）每一步都写死实现、参数和资源：用 OpenCV 切场景、抽 15 帧、32 个 CPU、Whisper 占 50 个 PTU、Llama-3.2 用 8 张 H100。这些配置和工作流结构绑在一起，任何改动都要手工改代码、重新部署[[rigid]]。Murakkab 的写法（Listing 2）只用自然语言写出子任务（“给定视频列表，识别场景”“抽帧”“语音转文字”“回答问题”）和它们之间的数据流，请求时再附上 SLO，例如低延迟。开发者也可以写明偏好，作为约束交给优化器。</p>
+    <dl class="defs">
+      <dt>执行器库</dt><dd>执行器有三种：大模型（含特定提示或微调）、模型的组合结构（如自我反思、LLM Debate）、工具（帧提取、搜索、MCP 工具，以及传统 ML 模型）。每个都附有描述、接口和可调参数，例如帧提取暴露帧数 F 和核数，LLM Debate 暴露辩论者数 D、轮数 R 和模型。</dd>
+      <dt>编排器</dt><dd>一个会调用工具的大模型，拿到任务描述和可用执行器列表，为每个子任务选出执行器[[orch]]，生成逻辑工作流（只表达功能、不绑定模型和硬件的 DAG），并检查相邻节点的输入输出类型是否匹配，不匹配就带着错误重新生成。任务只能映射到库中已有的执行器，找不到就请开发者接入一个[[library]]。</dd>
+    </dl>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>优化：两类画像加一个 MILP</h2><span class="fn">Fig. 6</span><span class="src">§3.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig6.png" alt="优化器的输入、目标、约束与输出" loading="lazy"></button>
+    </figure>
+    <dl class="defs">
+      <dt>工作流画像</dt><dd>离线在基准数据集（VideoMME、HumanEval、Math）上跑各种工作流和执行器参数，记录准确率和每个执行器的负载（每次模型调用的输入输出 token 分布）。论文引用生产智能体的研究说，很多部署的工作流基本不变，画像的成本可以被大量调用摊薄[[static]]。</dd>
+      <dt>模型画像</dt><dd>每个模型在不同 GPU、并行方式、负载下的 TTFT、TPOT、能耗和费用。与工作流画像分开，模型更新或新硬件上线只需补测模型画像。</dd>
+    </dl>
+    <p>优化器写成一个混合整数线性规划（MILP）。输入是两类画像、下一个周期每个（工作流，SLO）组合的预计请求率、各型号 GPU 的可用数量；每个周期决定工作流参数、每个执行器用的模型或工具、每种模型配置开几个实例、负载按什么比例分到各实例。约束是 SLO 可行、容量足够、不超过 GPU 预算；目标三选一：能耗最低、费用最低、费用预算内准确率最高。实例数按预计峰值配，以保证 SLO；分流比例按平均负载优化，多个工作流共用实例以提高利用率[[peak-avg]]。调用闭源 API 的模型也可以作为一种没有 GPU 需求、按 token 计费、有速率限制的画像放进来。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>执行：SLO 分级、周期性重新优化、自动扩容</h2><span class="src">§3.4</span></div>
+    <div class="pair">
+      <div>
+        <h3>SLO 分四档</h3>
+        <p>准确率和端到端延迟各分 best、good、fair、basic 四档，分别对应所有配置中可达到的最好值、第 95、80、50 百分位[[tiers]]。用户也可以不指定工作流，只发自然语言问题和 SLO，由编排器临时用已有的执行器拼出工作流。</p>
+      </div>
+      <div>
+        <h3>两种时间尺度的调整</h3>
+        <p>优化器在后台每个周期重跑一次，论文设为 60 分钟[[epoch]]，用前几个周期的负载预测下一个周期。智能体的生成量难以预测，例如视频问答在一种配置下中位数 600 token、P99 为 1200 token，所以另有自动扩容器在秒到分钟的尺度上看每个模型实例的负载，超过画像给出的阈值就扩容；负载或资源明显偏离预期时提前触发重新优化。优化器可以设成保守（按尾部负载配资源）或乐观（按常见负载配，波动交给扩容器）。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>实验：单工作流、多工作流、动态编程流水线、资源变化</h2>
+    <p>平台为 Azure 上各带 8 张 A100 或 H100 的虚拟机，推理用 vLLM v0.9。论文找不到公开的智能体工作流生产轨迹，于是用 2024 年 5 月 Azure 推理服务 24 小时的聊天和编程请求到达时间作为近似，聊天请求映射到视频问答，编程请求映射到代码生成[[trace]]。所有策略都按画像的第 90 百分位生成量配资源[[p90]]。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>单个视频问答工作流：按 SLO 档位配置</h2><span class="fn">Fig. 7</span><span class="src">§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig7.png" alt="视频问答在不同准确率和延迟 SLO 档位下的 GPU 数、能耗与费用，目标为最低能耗或最低费用" loading="lazy"></button>
+    </figure>
+    <p>所有请求使用相同的 SLO，分别以能耗最低（实心）和费用最低（斜线）为目标，横轴是 SLO 档位。(a) 准确率要求从 best（≥66.2%）降到 good（≥64.4%），能耗从 5.1 MWh 降到 3.9 MWh，少 23.5%[[video-acc]]；降到 fair（≥61.4%），费用从 1.85 万美元降到 6900 美元，约为四分之一。以能耗为目标时偏向用 H100，以费用为目标时偏向 A100。(b) 延迟要求从 ≤0.5 秒放宽到 ≤0.9 秒，能耗从 1.1 MWh 降到 266 kWh。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>单个代码生成工作流：换模型带来数量级差别</h2><span class="fn">Fig. 8</span><span class="src">§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig8.png" alt="代码生成在不同准确率和延迟 SLO 档位下的 GPU 数、能耗与费用" loading="lazy"></button>
+    </figure>
+    <p>代码生成在各档位之间，能耗从 312 MWh 到 2 MWh，费用从 82 万美元到 2.5 万美元。准确率要求从 best 放宽到 good，能耗约降为 1/10.5、费用约降为 1/8.7，主要因为从推理模型 DeepSeek-Qwen-32B 换成了 Gemma-3-27B[[code-acc]]，后者生成的 token 少得多。这组结果也说明，节省的大头来自改变工作流和模型的选择，而不仅仅是换硬件。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>多个工作流一起：与 LangGraph 比较</h2><span class="fn">Fig. 9</span><span class="fn">Table 2</span><span class="src">§4.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig9.png" alt="(a) 四种策略的能耗和费用随时间变化；(b) 两类请求的准确率和延迟" loading="lazy"></button>
+    </figure>
+    <div class="figgrid">
+      <div class="tbl"><table>
+        <thead><tr><th>策略（Table 2）</th><th class="r">GPU 数</th><th class="r">能耗 MWh</th><th class="r">费用 千美元</th></tr></thead>
+        <tbody>
+          <tr><td>LangGraph</td><td class="r n">2568</td><td class="r n">82.1</td><td class="r n">211.7</td></tr>
+          <tr><td>LangGraph + 自动扩容</td><td class="r n">2472</td><td class="r n">80.6</td><td class="r n">112.3</td></tr>
+          <tr><td>Murakkab Opt</td><td class="r n">1164</td><td class="r n">27.7</td><td class="r n">57.2</td></tr>
+          <tr class="me"><td>Murakkab Opt+Mult</td><td class="r n">912</td><td class="r n">22.1</td><td class="r n">47.2</td></tr>
+        </tbody>
+      </table></div>
+      <dl class="defs">
+        <dt>LangGraph（LG）</dt><dd>人工设定的基线，两个工作流都用 Gemma-3-27B 和 A100，在费用和准确率之间折中[[lg]]，资源固定。</dd>
+        <dt>LG + Auto</dt><dd>给 LangGraph 配上与 Murakkab 相同的自动扩容策略。</dd>
+        <dt>Mkb Opt</dt><dd>每个（工作流，SLO）组合单独优化，不考虑其他组合。</dd>
+        <dt>Mkb Opt+Mult</dt><dd>所有组合联合优化，尽量共用模型实例。</dd>
+      </dl>
+    </div>
+    <p>视频问答和代码生成的请求一起跑，70% 要求高准确率、30% 要求低延迟，都是 good 档。(a) LangGraph 的资源固定，每小时费用是一条水平线；加上自动扩容后费用降到约一半，但能耗几乎不变，因为它只是把相同的模型扩缩；Murakkab 随负载重新配置整个工作流，两条曲线都低得多。联合优化比单独优化再省 21.6% 的 GPU、20.2% 的能耗、17.4% 的费用[[mult]]。(b) LangGraph 不区分请求的 SLO，两类请求的准确率和延迟相同，低延迟请求违反了延迟 SLO[[lg-slo]]；Murakkab 给两类请求不同的配置。</p>
+    <p class="mine"><b>本页说明：</b>用 Table 2 计算：相对 LangGraph，GPU 少 2.8 倍、能耗少 3.7 倍，与摘要一致；费用是 211.7/47.2，约 4.5 倍，摘要写的是 4.3 倍。相对已经加上自动扩容的 LG + Auto，GPU 和能耗仍少约 2.7 倍和 3.6 倍，费用约 2.4 倍。另外从 Fig. 9(b) 看，Murakkab 的低延迟请求准确率明显低于 LangGraph（视频问答约 50% 对 66%），因为它为满足延迟换了更小、更快的配置，节省的一部分来自在 SLO 允许的范围内降低了准确率。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>动态编程流水线：没有一种配置处处最好</h2><span class="fn">Fig. 10</span><span class="src">§4.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig10.png" alt="动态编程流水线在 LiveCodeBench 上各配置的生成 token 与 pass@1，以及 Pareto 前沿" loading="lazy"></button>
+    </figure>
+    <p>在 LiveCodeBench-v5 上只评估工作流优化这一层，硬件分配和扩容已在前面两组实验中评估。每个点是一种配置：颜色是写代码的模型（Llama-3.1-70B 或 Phi-4），形状是并行候选数，粗边表示带审阅。Pareto 前沿横跨一个数量级的生成 token、约两倍的 pass@1。两个模型各有优势：小模型占据省钱的区间，大模型配专门的提示或审阅得到最高准确率；审阅也不总是有益，对一些模型和题目组合反而降低准确率[[review]]。由此论文认为静态部署只能选一个配置，要么在简单题上浪费，要么在难题上不够，应按每个请求选择。</p>
+    <p class="mine"><b>本页说明：</b>这一节只画出了可选配置的前沿，没有给出 Murakkab 按请求选择配置后实际达到的准确率和费用。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>可用资源变化时的调整</h2><span class="fn">Table 3</span><span class="fn">Fig. 11</span><span class="src">§4.5</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th class="r">可用 H100</th><th class="r">使用 A100</th><th class="r">使用 H100</th><th class="r">能耗 MWh</th><th class="r">费用 千美元</th></tr></thead>
+      <tbody>
+        <tr><td class="r n">0</td><td class="r n">1292</td><td class="r n">0</td><td class="r n">24.7</td><td class="r n">55.7</td></tr>
+        <tr><td class="r n">100</td><td class="r n">780</td><td class="r n">100</td><td class="r n">17.8</td><td class="r n">52.4</td></tr>
+        <tr><td class="r n">200</td><td class="r n">536</td><td class="r n">200</td><td class="r n">14.5</td><td class="r n">60.3</td></tr>
+        <tr><td class="r n">300</td><td class="r n">288</td><td class="r n">300</td><td class="r n">12.4</td><td class="r n">64.8</td></tr>
+        <tr><td class="r n">400</td><td class="r n">50</td><td class="r n">400</td><td class="r n">11.1</td><td class="r n">70.6</td></tr>
+        <tr><td class="r n">500</td><td class="r n">0</td><td class="r n">495</td><td class="r n">11.0</td><td class="r n">75.4</td></tr>
+      </tbody>
+    </table></div>
+    <p>负载同上一组，A100 始终有 2000 张可用，H100 从 0 张增加到 500 张，目标为能耗最低。H100 越多，Murakkab 用得越多、A100 用得越少，能耗从 24.7 MWh 降到 11 MWh[[h100]]，费用则上升，即用费用换能耗。Fig. 11（400 张 H100 时）显示，每个周期结束时按负载增减实例，优先用 H100；有富余时把高准确率的视频问答请求合并到服务代码生成的 Gemma 实例上。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig11.png" alt="400 张 H100 约束下各模型实例的负载、实例数、GPU 分配、能耗和费用随时间变化" loading="lazy"></button>
+    </figure>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>看得见工作流结构才能这样调度</h2><span class="fn">Fig. 12</span><span class="src">§4.6</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig12.png" alt="三种放置方案下并行的视频问答和代码生成的执行时间线与资源占用" loading="lazy"></button>
+    </figure>
+    <p>一个请求：从视频里看出学生写的代码并验证，延迟上限 30 秒。编排器把它拆成并行的两支：视频问答提取代码、代码生成写出参考答案。三种方案都用 4 张 A100 跑 Gemma-3-27B，区别在目标检测（OmDet）和语音转文字（Whisper）放在哪里。(a) 两者各占一张 GPU，共 6 张，满足 SLO，但这两张 GPU 利用率低、CPU 闲着。(b) 两者都放 CPU，只用 4 张 GPU，但 OmDet 占满所有 CPU 核，超时。(c) OmDet 用 1 张 GPU、Whisper 用 CPU，共 5 张，两支几乎同时完成，满足 SLO，被选为最省资源的方案[[sched]]。只有看得到工作流内部各阶段和它们的画像，才能做出这种分配。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>优化周期取多长</h2><span class="fn">Fig. 13</span><span class="src">§4.7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/murakkab/fig13.png" alt="(a) 不同优化周期下的费用与利用率；(b) 需求低估的比例" loading="lazy"></button>
+    </figure>
+    <p>假设开一个新实例（分配虚拟机、装软件、把模型放上 GPU）要 20 分钟[[prov]]，用指数加权移动平均预测负载，周期从 20 分钟试到 6 小时。(a) 10 到 60 分钟时切换太频繁，过渡期间要多配 GPU，利用率低；60 到 180 分钟时最划算，利用率在 60 分钟左右最高；180 分钟以上预测偏离实际，只能多配资源。(b) 需求被低估、没有扩容就会丢掉的请求比例随周期增长，约 240 分钟时最高，约 15%[[underpred]]。论文取 60 分钟作为折中。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>画像能否推广到没见过的输入</h2><span class="src">§4.8</span></div>
+    <p>整个方法依赖离线画像，所以画像必须对新输入成立。论文在数学多轮解题工作流上用 Math-500 做画像，用没参与画像的 MathEval 测试：各模型的准确率高低顺序在两者之间一致[[general]]，生成 token 的分布形状、分散程度和峰值也接近。据此认为对相近领域的新输入，优化器可以按准确率要求选模型并预估负载。</p>
+    <p class="mine"><b>本页说明：</b>这里验证的是在相近领域内换一个数据集。真实请求与画像所用基准的差别（如视频长度、代码题难度）可能更大，论文的结论也限定为来自相近领域的输入。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>Murakkab 把智能体工作流的描述与执行配置分开：开发者只写子任务和数据流，用户给出 SLO，平台按离线的工作流画像和模型画像，用 MILP 同时选择工作流参数、模型、硬件和实例数，每个周期重新优化，自动扩容器处理短时波动。因为平台看得到整个工作流，能把多个工作流的负载合并到共用的实例上，也能按阶段决定放在 GPU 还是 CPU 上。</p>
+    <p>在用 Azure 推理轨迹近似的 24 小时负载上，相对人工设定的 LangGraph 部署，GPU、能耗和费用都降低到几分之一，且满足各请求的准确率和延迟要求。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，到达时间来自普通聊天和编程推理请求的轨迹，映射到视频问答和代码生成上，并不是智能体工作流的真实轨迹，论文对此有说明[[trace]]。第二，对照组是一个人工设定的固定配置，节省中有相当部分来自“允许按 SLO 换模型、降准确率”，与加了相同扩容策略的基线相比，费用的差距约为 2.4 倍。第三，SLO 档位是按配置空间的百分位定义的，档位的含义随候选配置的集合而变。第四，工作流的结构和执行器要预先接入并画像；对 Claude Code 这类每个请求执行路径都不同的智能体，论文只评估了配置前沿，没有端到端的系统结果。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码（第 1 页为 USENIX 封面），编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="opaque"><blockquote lang="en">The key problem is that they expose workflows as opaque sequences of model and tool calls that tightly couple agent logic with model and hardware choices.</blockquote><p class="loc">摘要，第 2 页</p></li>
+      <li data-key="silo"><blockquote lang="en">Since these layers are optimized independently, the system cannot reason about global, end-to-end objectives such as minimizing cost while meeting a per-query accuracy SLO or maximizing throughput under a latency constraint.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="control"><blockquote lang="en">The core idea is to introduce a control plane that treats the entire agentic workflow: the sequence of LLM calls, tool executions, and data dependencies, as a single, optimizable computational graph running on a cloud platform’s model deployments.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="gemma"><blockquote lang="en">using Gemma-3-27B [81] with 10 frames and STT enabled achieves the highest video Q/A accuracy (66.2%) but also generates the most tokens compared to other configurations of the same model.</blockquote><p class="loc">§2.5，第 5 页</p></li>
+      <li data-key="tokens"><blockquote lang="en">At the median, it generates ≈20,000 tokens versus ≈2,500 for Gemma-3-27B under the same workflow configuration.</blockquote><p class="loc">§2.5，第 5 页</p></li>
+      <li data-key="rigid"><blockquote lang="en">This tightly couples configuration choices with the workflow DAG, making deployed workflows rigid.</blockquote><p class="loc">§2.3，第 4 页</p></li>
+      <li data-key="orch"><blockquote lang="en">At the core is an LLM with tool-calling capabilities [71], which receives a list of available executors and their interfaces, along with task descriptions, and selects the best executor for each sub-task.</blockquote><p class="loc">§3.2，第 8 页</p></li>
+      <li data-key="library"><blockquote lang="en">A key design choice in Murakkab is mapping a broad range of unknown tasks to executors that are built from a finite, known set of models and tools in the library.</blockquote><p class="loc">§3.2，第 7 页</p></li>
+      <li data-key="static"><blockquote lang="en">Recent studies of production agents show that many deployed workflows are largely static [68], making targeted profiling practical</blockquote><p class="loc">§3.3，第 8 页</p></li>
+      <li data-key="peak-avg"><blockquote lang="en">instance counts nm are sized for projected peak demand (ensuring SLO compliance), while routing fractions are optimized against average demand</blockquote><p class="loc">§3.3.1，第 9 页</p></li>
+      <li data-key="tiers"><blockquote lang="en">The SLO tiers correspond to the best, 95th, 80th, and 50th percentile values of accuracy and latency available among the set of all workflow, model, and hardware configurations.</blockquote><p class="loc">§3.4，第 10 页</p></li>
+      <li data-key="epoch"><blockquote lang="en">The optimizer runs in the background after every optimization epoch, in our case every 60 minutes</blockquote><p class="loc">§3.4，第 10 页</p></li>
+      <li data-key="trace"><blockquote lang="en">Since no publicly available traces exist for production agentic workflow serving, we approximate workload arrivals using LLM serving traces collected over a 24-hour period in May 2024 from Azure’s LLM inference service for chat and coding applications [78]</blockquote><p class="loc">§4.1，第 10 页</p></li>
+      <li data-key="p90"><blockquote lang="en">We assume the 90th percentile token generation load from our profiles when making resource allocation decisions for all policies for a fair comparison.</blockquote><p class="loc">§4.1，第 11 页</p></li>
+      <li data-key="video-acc"><blockquote lang="en">Murakkab lowers energy consumption from 5.1 MWh at 66.2% accuracy (best) to 3.9 MWh at 64.4% accuracy (good)</blockquote><p class="loc">§4.2，第 11 页</p></li>
+      <li data-key="code-acc"><blockquote lang="en">Relaxing the accuracy SLO from best to good yields a sharp drop in energy (≈ 10.5×) and cost (≈ 8.7×), mainly due to Murakkab switching from DeepSeek-Qwen-32B to Gemma-3-27B</blockquote><p class="loc">§4.2，第 11 页</p></li>
+      <li data-key="lg"><blockquote lang="en">is a hand-crafted baseline that balances cost and accuracy for both workflows, using Gemma-3-27B and A100 GPUs.</blockquote><p class="loc">§4.1，第 10 页</p></li>
+      <li data-key="mult"><blockquote lang="en">It requires 912 A100 GPUs (21.6% reduction), 22.1 MWh energy (20.2% reduction), and $47,238 cost (17.4% reduction) respectively.</blockquote><p class="loc">§4.3，第 11 页</p></li>
+      <li data-key="lg-slo"><blockquote lang="en">LangGraph cannot distinguish between per-request SLO variations to configure workflows appropriately.</blockquote><p class="loc">§4.3，第 11 页</p></li>
+      <li data-key="review"><blockquote lang="en">it improves accuracy for some (model, task) combinations and degrades it for others</blockquote><p class="loc">§4.4，第 12 页</p></li>
+      <li data-key="h100"><blockquote lang="en">Starting with an allocation of 1292 A100 GPUs and no H100 GPUs, which consumes 24.7 MWh energy</blockquote><p class="loc">§4.5，第 13 页</p></li>
+      <li data-key="sched"><blockquote lang="en">Murakkab selects the configuration with OmDet on GPU and Whisper on CPU (Figure 12c) as the most resource-efficient option</blockquote><p class="loc">§4.6，第 14 页</p></li>
+      <li data-key="prov"><blockquote lang="en">Provisioning new instances (i.e., VM allocation, software setup, and model transfer to GPUs) is assumed to take 20 minutes</blockquote><p class="loc">§4.7，第 14 页</p></li>
+      <li data-key="underpred"><blockquote lang="en">under-prediction is minimal at short intervals but rises steadily, peaking at ∼15% around 240 minutes.</blockquote><p class="loc">§4.7，第 14 页</p></li>
+      <li data-key="general"><blockquote lang="en">Figure 14a shows that the same trend in accuracy holds between the profiled and test benchmarks across different models.</blockquote><p class="loc">§4.8，第 15 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

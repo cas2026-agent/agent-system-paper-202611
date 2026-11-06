@@ -1,0 +1,193 @@
+<article class="view frame paper" id="view-simthesizer" data-paper="simthesizer" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Simthesizer: An Agent-Driven Simulation Framework for LLM Serving Systems</h1>
+  <p class="zh">Simthesizer：由编码智能体扩展的大模型推理服务模拟框架</p>
+  <p class="by">Wonung Kim、Hyunmin Choi、Minsu Kim、Jaehong Cho、Yeongwook Kim、Jongse Park，KAIST</p>
+  <div class="meta">
+    <span class="venue">arXiv 2608.24650v2，cs.AR，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>推理服务</span><span>性能模拟器</span><span>编码智能体</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>模拟器跟不上推理服务的变化</h2><span class="fn">Fig. 1</span><span class="fn">Fig. 2</span><span class="src">§I、§II</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig2.png" alt="推理服务的两个变化：(a) 演进快；(b) 不再是单一流程" loading="lazy"></button>
+    </figure>
+    <p>系统级模拟器（如 Vidur、APEX、LLMServingSim、LLMServingSim 2.0）用来在不部署真实系统的情况下探索推理服务的设计空间。论文指出，它们都建立在两个前提上：推理服务演进得足够慢，人工可以跟上；服务行为可以装进一条固定的模拟流程[[premises]]。这两个前提正在失效。</p>
+    <dl class="defs">
+      <dt>(a) 演进快</dt><dd>智能体负载、投机解码的一代代变体、prefill 与 decode 分离、注意力与 FFN 分离，新一波出现时上一波还没成为标准做法。新机制出现的速度超过了人工开发模拟器的速度[[pace]]。</dd>
+      <dt>(b) 不再是单一流程</dt><dd>智能体请求把一个查询展开成多次推理、中间夹着工具调用和子智能体；分离部署、投机解码、跨层 KV 管理把原来自成一体的推理过程拆成多个相互配合的阶段。固定流程装不下的机制，每加一个都要侵入式地改写模拟器[[rewrite]]。</dd>
+    </dl>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">思路</span><h2>两条设计原则</h2><span class="src">§II-C</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig1.png" alt="(a) 已有模拟器要人工做底层修改；(b) Simthesizer 用统一的动态 DAG 组合流程，由智能体扩展" loading="lazy"></button>
+    </figure>
+    <p>两个困难归根结底是人力不够，所以让编码智能体来写扩展。但直接把智能体接到已有模拟器上不够：它继承了固定流程的耦合，每次扩展仍是大范围改写；而且能编译、能过功能测试的代码，模拟的可能是错误的系统[[wrong]]。由此提出两条原则。</p>
+    <dl class="defs">
+      <dt>原则一：可组合</dt><dd>用统一的表示描述所有阶段、依赖和状态转换，增加机制时只增加和组合部件，不改执行引擎。</dd>
+      <dt>原则二：有约束地让智能体实现</dt><dd>限定修改范围，加上模拟器专用的检查，并用与真实系统对比等方式验证模拟的语义是否正确。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>整体：模拟器加编码智能体</h2><span class="fn">Fig. 3</span><span class="src">§III</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig3.png" alt="Simthesizer 框架、模拟器和 Synthesizer agent 三部分" loading="lazy"></button>
+    </figure>
+    <p>(a) 用户用自然语言提出要加的功能，Synthesizer agent 把它变成规格、映射到模拟器的抽象上、实现缺少的部分，再与真实系统的测量或参考资料对比验证，最后交出扩展后的模拟器和设计、验证文档。(b) Simthesizer simulator 分两层：下层是统一的动态 DAG，上层是由调度器、路由器、模型等可替换部件组成的控制层。(c) Synthesizer agent 按 task-design、sim-mapping、sim-dev 三个阶段工作，然后做验证。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>执行层：把控制决策也变成图上的节点</h2><span class="fn">Fig. 4</span><span class="src">§IV-A、§IV-B</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig4.png" alt="Simthesizer 模拟器的两层架构" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>节点</th><th class="wrap">表示什么</th><th>延迟</th><th>是否改状态</th></tr></thead>
+      <tbody>
+        <tr><td>计算节点</td><td class="wrap">已排定的某个模型算子在某个设备上执行</td><td>派发时确定</td><td>否</td></tr>
+        <tr><td>通信节点</td><td class="wrap">设备之间的一次传输</td><td>可能因链路争抢而改变</td><td>否</td></tr>
+        <tr><td>逻辑节点</td><td class="wrap">请求到达、路由、组批、状态转换等控制决策</td><td>固定</td><td>是</td></tr>
+      </tbody>
+    </table></div>
+    <p>已有的模拟器把计算和通信画成图，但路由、组批这些决策放在图之外的固定控制流里[[outside]]。Simthesizer 把决策也做成节点。服务过程是动态的，批的组成、放在哪里、请求要经过哪些阶段都取决于运行时状态，所以逻辑节点执行时可以通过一组 API 往图里加节点、改依赖。例如在分离部署中，决定 decode 放到另一台机器后，先断开 prefill 节点的出边，插入一个 KV 传输节点，再把 decode 接在它后面。所有节点由一个按时间排序的事件循环推进；通信节点的完成时间可以在资源状态变化时被撤销并重新安排，以此表达带宽争抢。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>控制层：接口固定，实现可换</h2><span class="fn">Fig. 5</span><span class="src">§IV-C</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig5.png" alt="(a) 抽象接口；(b) 具体实现；(c) 用结构化配置组装系统" loading="lazy"></button>
+    </figure>
+    <p>如果所有决策都由一个处理函数来做，控制层上又会出现一条固定流程。所以按角色拆成部件，每个部件处理自己角色的逻辑节点、持有自己的策略状态。(a) 接口固定角色的操作，例如 Scheduler 负责接收子请求、给出下一批；(b) 具体实现封装策略和状态，例如带前缀缓存的分块 prefill 调度器；(c) 配置文件选择每个接口用哪个实现。已有的策略够用时，只改配置就能组装出目标系统[[config]]；缺一个时，只需在它的接口后实现这一个策略。内置部件覆盖单实例和多实例、prefill 与 decode 分离、专家并行的 MoE 等。</p>
+    <p>计算耗时默认用离线 profile 插值，每类层最多用两个键（例如注意力用已缓存的 KV 量和查询与上下文的交互数）；网络默认按流建模。两者都可以换成更精细的硬件或网络模拟器。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>Synthesizer agent：三个阶段、三份文档、两种验证</h2><span class="fn">Fig. 6</span><span class="fn">Fig. 7</span><span class="src">§V</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/simthesizer/fig6.png" alt="智能体扩展模拟器的过程：task-design、sim-mapping、sim-dev 与验证" loading="lazy"></button>
+      </figure>
+      <div class="tbl"><table>
+        <thead><tr><th>阶段</th><th class="wrap">要满足的要求</th><th class="wrap">产出</th></tr></thead>
+        <tbody>
+          <tr><td>task-design</td><td class="wrap">语义完整：决定模拟时间、资源争抢、状态生命周期、依赖结构的量和假设都要写清，近似要给出依据和适用范围</td><td class="wrap">面向模拟器的规格文档</td></tr>
+          <tr><td>sim-mapping</td><td class="wrap">结构对应：每个建模决定落到负责它的那个模拟器抽象上，避免散落在不相关的控制路径里</td><td class="wrap">实现映射表</td></tr>
+          <tr><td>sim-dev</td><td class="wrap">建模精度：按映射表改代码，根据编译、运行和测试结果迭代；检查未声明的近似、来路不明的常数和偏离映射表的改动</td><td class="wrap">代码与验证报告</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <p>规格中有影响性能的决定靠资料和模拟器上下文定不下来时，智能体会请人澄清，而不是悄悄选一个默认值[[human]]。验证分两种：有真实系统时做轨迹对比，在相同负载和配置下对齐队列长度、批组成、资源利用率等内部信号，把偏差追溯到具体的建模决定；没有可比的测量时（未发布的硬件、新机制）做参考对比，从参考实现和已发表的结果中推出性能标准。后者不能证明与目标系统一致，但给出了可追溯的依据并暴露剩余的不确定性[[reference]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">示例</span><h2>投机解码：一次验证找出的语义错误</h2><span class="fn">Fig. 7</span><span class="fn">Table II</span><span class="src">§V-D</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig7.png" alt="task-design 生成的投机解码规格摘要" loading="lazy"></button>
+    </figure>
+    <p>以 EAGLE 式投机解码为例：小模型先起草几个 token，目标模型一次验证，只有被接受的 token 推进生成。task-design 从参考资料中推出四个变量：验证宽度 W、剩余输出长度 R、被接受的长度 A、请求已提交的进度 M。sim-mapping 把 W 和 M 放进已有的请求和调度机制，沿用通用的 DAG 执行路径，没有新增事件、节点类型或 API。第一版候选在验证轨迹上把吞吐高估了 13.4%[[overest]]：检查发现它只在最后一层用了宽度 W，其余层按起草数计算，低估了计算和通信。修正后，吞吐偏差降到 6.7%[[fixed]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验</h2>
+    <p>两张 RTX Pro 6000 Blackwell，真实系统为 vLLM v0.19.1。默认由 GPT-5.4（xhigh，通过 OpenAI Codex）充当 Synthesizer agent。对照是 LLMServingSim 2.0 和 Vidur：三个模拟器都没有原生支持的三个功能（FP8 KV 缓存量化、EAGLE3 投机解码、Mamba 混合模型），由相同的编码智能体、相同的 harness、相同的提示、资料、规格和 profile 数据分别加进去；harness 中不含 Simthesizer 专属的信息[[fair]]，每个任务独立重复多次、无人干预，取平均[[trials]]。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>智能体负载：不加扩展时的精度</h2><span class="fn">Fig. 8</span><span class="fn">Table III</span><span class="src">§VI，Q1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig8.png" alt="未扩展的 Simthesizer 与 vLLM 在 mini-SWE-bench 和 tau-bench 上的吞吐随时间对比" loading="lazy"></button>
+    </figure>
+    <p>用 mini-SWE-bench 和 tau-bench 的智能体负载，与真实 vLLM 比较 240 秒内的生成吞吐。工具调用事先在主机上执行并记下耗时，模拟时在对应阶段重放[[tool]]。dense 模型（Llama3.1-8B）几乎重合；MoE 模型（Qwen3-30B-A3B）偏差更明显，因为专家路由按统计模型估计，没有用每个请求实际的路由[[moe]]。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>误差 %（Table III）</th><th class="r">SWE，8B</th><th class="r">SWE，30B</th><th class="r">tau，8B</th><th class="r">tau，30B</th></tr></thead>
+      <tbody>
+        <tr><td>吞吐</td><td class="r n">0.20</td><td class="r n">2.78</td><td class="r n">0.51</td><td class="r n">4.54</td></tr>
+        <tr><td>平均 TTFT</td><td class="r n">4.10</td><td class="r n">19.83</td><td class="r n">17.23</td><td class="r n">21.87</td></tr>
+        <tr><td>平均 TPOT</td><td class="r n">0.27</td><td class="r n">2.82</td><td class="r n">0.93</td><td class="r n">4.16</td></tr>
+        <tr><td>中位 ITL</td><td class="r n">0.65</td><td class="r n">14.75</td><td class="r n">11.44</td><td class="r n">11.94</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">SWE 指 mini-SWE-agent，tau 指 tau-bench；摘录 Table III 的部分行。TTFT 和 ITL 误差较大，论文归因于网络、kernel 启动等难以模拟的尾部因素。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>扩展精度：底座决定扩展质量</h2><span class="fn">Fig. 9</span><span class="fn">Fig. 10</span><span class="src">§VI，Q2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig9.png" alt="三个模拟器分别加入三个功能后与 vLLM 的吞吐对比" loading="lazy"></button>
+    </figure>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig10.png" alt="三个功能扩展后各模拟器吞吐、TTFT、TPOT、ITL 的平均和中位误差" loading="lazy"></button>
+    </figure>
+    <p>KV 缓存量化只需要跟踪显存和量化开销，三个模拟器误差都低。投机解码和 Mamba 混合模型要同时改调度、模型结构和性能模型，Simthesizer 的误差明显最低，例如 Mamba 混合模型的平均 TTFT 误差约 11%，两个对照约 82%。由于智能体、harness、规格和 profile 数据都相同，论文认为差别来自底层模拟器[[isolate]]：模块化接口让扩展局限在一处，固定流程则要牵动多个耦合的部件。总体平均吞吐误差 2.51% 对 6.03%。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>harness 的作用与换一个编码智能体</h2><span class="fn">Table IV</span><span class="fn">Fig. 12</span><span class="src">§VI，Q3、Q5</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>误差 %（Table IV）</th><th class="r">吞吐</th><th class="r">TTFT</th><th class="r">TPOT</th><th class="r">ITL</th></tr></thead>
+      <tbody>
+        <tr><td>不用 harness</td><td class="r n">4.70</td><td class="r n">10.73</td><td class="r n">5.71</td><td class="r n">11.05</td></tr>
+        <tr class="me"><td>用 harness</td><td class="r n">2.84</td><td class="r n">4.52</td><td class="r n">1.55</td><td class="r n">5.28</td></tr>
+      </tbody>
+    </table></div>
+    <p>在 Simthesizer 上加投机解码（ShareGPT 负载、Qwen3-32B），不用 harness 时各项误差升高 1.65 到 3.69 倍[[harness]]：编码智能体常漏掉重要的系统细节，规格不全就开始写代码。harness 提供知识库，规格没定清就不让实现，并强制自我验证。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig12.png" alt="Codex 与 Claude Code 分别实现投机解码后的模拟吞吐与 vLLM 对比" loading="lazy"></button>
+    </figure>
+    <p>换成 Claude Code（Opus 4.7）做同样的投机解码扩展，两者的平均误差分别为 4.1% 和 4.9%[[agents]]，harness 不依赖特定的智能体。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>模拟速度</h2><span class="fn">Fig. 11</span><span class="src">§VI，Q4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/simthesizer/fig11.png" alt="三个功能扩展后，三个模拟器在 ShareGPT 负载上的模拟耗时" loading="lazy"></button>
+    </figure>
+    <p>ShareGPT 负载下，Simthesizer 平均比 LLMServingSim 2.0 快 164.9 倍、比 Vidur 快 6.65 倍[[speed]]。论文的解释是已有模拟器没有模块化的边界，扩展逻辑直接写进模拟流程，每个模拟迭代都多了开销[[overhead]]。Mamba 混合模型这一项 Simthesizer 用了约 23 秒，因为各层结构不同，它不能只模拟一层再复用，要逐层模拟。</p>
+    <p class="mine"><b>本页说明：</b>这里比较的是三个模拟器各自由智能体加入新功能之后的速度，不是原生版本之间的速度，差距中包含了“扩展写得好不好”。另外从图上看，Mamba 混合模型一项 Simthesizer 与 Vidur 都约 23 秒，在这项上并不更快。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>Simthesizer 把模拟器的执行做成一张可以在运行时生长的 DAG，控制决策也是图上的节点；控制层按角色拆成接口固定、实现可换的部件。在此之上，Synthesizer agent 用三阶段、带文档和检查的流程把自然语言的功能需求变成局部的扩展，再用真实系统或参考资料验证。相同智能体和 harness 下，在它上面做的扩展比在已有模拟器上做的更准，吞吐误差 2.51% 对 6.03%，而且模拟更快。论文认为“可组合的模拟底座加智能体扩展”也可以用在其他系统领域的模拟器上。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，实验规模小：两张 RTX Pro 6000，负载每组 50 到 400 个请求，三个扩展任务；投机解码的修正需要人看验证报告后再跑一轮。第二，智能体负载的实验里工具调用耗时是事先测好再重放的，工作流也是 mini-SWE-bench 和 tau-bench 预先定义好的形式，没有涉及执行路径随模型输出变化的情形。第三，论文没有给出扩展任务的重复次数和各次的方差，只说取平均。第四，作者名单中 Hyunmin Choi、Jaehong Cho、Jongse Park 也是 LLMServingSim 2.0 的作者，代码同样发布在 casys-kaist 组织下；对照组之一是这个研究组此前的模拟器，论文正文没有说明这层关系。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="premises"><blockquote lang="en">Most simulators rest on two premises, that serving systems evolve slowly enough for manual engineering to keep pace and that serving behavior can be captured by a single monolithic simulation pipeline.</blockquote><p class="loc">§I，第 2 页</p></li>
+      <li data-key="pace"><blockquote lang="en">modern LLM serving now evolves faster than human-driven simulator development can track</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="rewrite"><blockquote lang="en">Each new mechanism therefore demands an invasive rewrite, leaving a widening development gap between deployed serving systems and the simulators that model them.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="wrong"><blockquote lang="en">Even then, generated code that compiles and passes functional tests can still model the wrong system, demanding simulator-specific guardrails and fidelity validation.</blockquote><p class="loc">§II-C，第 3 页</p></li>
+      <li data-key="outside"><blockquote lang="en">Existing simulators implement these decisions in fixed control flow outside their compute and communication DAGs</blockquote><p class="loc">§IV-A，第 5 页</p></li>
+      <li data-key="config"><blockquote lang="en">When every required policy exists, a user or Synthesizer agent composes the target system through configuration alone</blockquote><p class="loc">§IV-C，第 6 页</p></li>
+      <li data-key="human"><blockquote lang="en">Synthesizer agent requests human clarification of the intended behavior, missing parameters, and modeling boundaries rather than silently selecting a default.</blockquote><p class="loc">§V-B，第 8 页</p></li>
+      <li data-key="reference"><blockquote lang="en">Although this regime does not establish empirical agreement with the target system, it provides traceable technical justification and exposes the remaining uncertainty.</blockquote><p class="loc">§V-C，第 8 页</p></li>
+      <li data-key="overest"><blockquote lang="en">trace-guided validation found that the candidate overestimated target system throughput by 13.4% on the validation trace.</blockquote><p class="loc">§V-D，第 9 页</p></li>
+      <li data-key="fixed"><blockquote lang="en">the subsequent candidate showed a 6.7% throughput divergence from the real system</blockquote><p class="loc">§V-D，第 9 页</p></li>
+      <li data-key="fair"><blockquote lang="en">Importantly, the Synthesizer agent harness does not encode any Simthesizer-specific information.</blockquote><p class="loc">§VI，第 10 页</p></li>
+      <li data-key="trials"><blockquote lang="en">We repeat each extension task over multiple independent trials without human intervention</blockquote><p class="loc">§VI，第 10 页</p></li>
+      <li data-key="tool"><blockquote lang="en">For each tool call, we execute it on the host in advance and record its latency, which the simulation replays at the corresponding stage.</blockquote><p class="loc">§VI，第 10 页</p></li>
+      <li data-key="moe"><blockquote lang="en">This discrepancy arises from the statistical modeling of MoE routing</blockquote><p class="loc">§VI，第 10 页</p></li>
+      <li data-key="isolate"><blockquote lang="en">Because the coding agent, harness, specifications, and profiling data are identical across all three systems, the accuracy difference isolates the contribution of the underlying simulator.</blockquote><p class="loc">§VI，第 11 页</p></li>
+      <li data-key="harness"><blockquote lang="en">Without the harness, simulation error rises by 1.65×–3.69× across throughput and latency metrics.</blockquote><p class="loc">§VI，第 11 页</p></li>
+      <li data-key="agents"><blockquote lang="en">achieving average error rates of 4.1% and 4.9%, respectively</blockquote><p class="loc">§VI，第 11 页</p></li>
+      <li data-key="speed"><blockquote lang="en">Simthesizer runs on average 164.9× (up to 284.96×) faster than LLMServingSim2.0 and 6.65× (up to 23.19×) faster than Vidur.</blockquote><p class="loc">§VI，第 11 页</p></li>
+      <li data-key="overhead"><blockquote lang="en">Existing simulators expose no modular boundaries for new mechanisms, so extension logic is built directly into their simulation pipelines, adding overhead to every simulated iteration.</blockquote><p class="loc">§VI，第 11 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

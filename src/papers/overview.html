@@ -2,160 +2,110 @@
 
 <div class="canvas">
   <section class="panel">
-    <div class="ph"><span class="tag">总览</span><h2>智能体系统的层次，以及六篇论文各自的位置</h2></div>
+    <div class="ph"><span class="tag">总览</span><h2>智能体系统的层次，以及 29 篇论文各自的位置</h2></div>
     <figure class="fig arch">
       <div class="arch-scroll">
-      <svg viewBox="0 0 1200 780" role="img" aria-label="智能体系统四层架构：任务与评测、智能体、推理服务与工具沙箱、硬件与数据中心；AgentBoard 位于评测层，LLMServingSim 2.0 覆盖推理服务层和 GPU 硬件，AgentServeSim 位于推理服务层的策略部分，DeltaBox 位于沙箱内部的存档机制，Crab 位于智能体与推理服务之间的代理和宿主机存档调度，The Cost of Dynamic Reasoning 覆盖从智能体主循环到数据中心电力的链路。">
-        <defs>
-          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0,0 L10,5 L0,10 z" class="ah"/>
-          </marker>
-        </defs>
-
-        <!-- layer bands -->
-        <rect class="band" x="12" y="12" width="1176" height="100" rx="8"/>
-        <rect class="band" x="12" y="150" width="1176" height="120" rx="8"/>
-        <rect class="band" x="12" y="310" width="1176" height="262" rx="8"/>
-        <rect class="band" x="12" y="610" width="1176" height="120" rx="8"/>
-        <text class="lyr" x="28" y="67">任务与评测</text>
-        <text class="lyr" x="28" y="215">智能体</text>
-        <text class="lyr" x="28" y="446">运行时</text>
-        <text class="lyr" x="28" y="675">硬件与数据中心</text>
-
-        <!-- evaluation layer -->
-        <rect class="box" x="170" y="30" width="460" height="62" rx="6"/>
-        <text class="t" x="400" y="57">测试环境：家务、游戏、网页、工具</text>
-        <text class="s" x="400" y="77">多轮交互，部分可观测</text>
-        <rect class="box" x="660" y="30" width="300" height="62" rx="6"/>
-        <text class="t" x="810" y="57">评测指标</text>
-        <text class="s" x="810" y="77">成功率、进度率、子能力</text>
-
-        <!-- agent layer -->
-        <rect class="box" x="170" y="172" width="250" height="76" rx="6"/>
-        <text class="t" x="295" y="204">推理与搜索策略</text>
-        <text class="s" x="295" y="225">ReAct、Reflexion、LATS、MCTS</text>
-        <rect class="box strong" x="470" y="172" width="260" height="76" rx="6"/>
-        <text class="t" x="600" y="204">智能体主循环</text>
-        <text class="s" x="600" y="225">推理、调工具、读结果，循环</text>
-        <rect class="box" x="800" y="172" width="230" height="76" rx="6"/>
-        <text class="t" x="915" y="204">强化学习训练</text>
-        <text class="s" x="915" y="225">从相同状态开出多条 rollout</text>
-        <line class="ar" x1="420" y1="210" x2="466" y2="210" marker-end="url(#ah)"/>
-        <text class="al" x="443" y="202">控制</text>
-        <line class="ar" x1="800" y1="210" x2="734" y2="210" marker-end="url(#ah)"/>
-        <text class="al" x="769" y="202">批量运行</text>
-
-        <!-- evaluation <-> agent -->
-        <line class="ar" x1="520" y1="94" x2="520" y2="168" marker-end="url(#ah)"/>
-        <text class="al end" x="512" y="136">目标、观察</text>
-        <line class="ar" x1="560" y1="170" x2="560" y2="96" marker-end="url(#ah)"/>
-        <text class="al start" x="568" y="136">动作</text>
-
-        <!-- runtime columns -->
-        <rect class="col" x="160" y="320" width="480" height="244" rx="6"/>
-        <text class="ct" x="175" y="341">大模型推理服务</text>
-        <rect class="col" x="660" y="320" width="520" height="244" rx="6"/>
-        <text class="ct" x="675" y="341">工具执行沙箱（容器或轻量虚拟机）</text>
-
-        <rect class="box" x="175" y="352" width="140" height="50" rx="5"/>
-        <text class="t" x="245" y="372">KV 缓存保留</text>
-        <text class="s" x="245" y="391">工具间隙留不留</text>
-        <rect class="box" x="330" y="352" width="140" height="50" rx="5"/>
-        <text class="t" x="400" y="372">排队调度</text>
-        <text class="s" x="400" y="391">谁先执行</text>
-        <rect class="box" x="485" y="352" width="140" height="50" rx="5"/>
-        <text class="t" x="555" y="372">实例路由</text>
-        <text class="s" x="555" y="391">派到哪台机器</text>
-        <rect class="box" x="175" y="414" width="450" height="52" rx="5"/>
-        <text class="t" x="400" y="436">推理引擎（vLLM）</text>
-        <text class="s" x="400" y="455">prefill、decode、连续批处理、前缀缓存</text>
-        <rect class="box" x="175" y="478" width="450" height="44" rx="5"/>
-        <text class="t" x="400" y="505">GPU 显存：模型权重与 KV 缓存</text>
-
-        <rect class="box" x="675" y="352" width="240" height="50" rx="5"/>
-        <text class="t" x="795" y="372">智能体或工具进程</text>
-        <text class="s" x="795" y="391">内存：对话、中间结果</text>
-        <rect class="box" x="925" y="352" width="240" height="50" rx="5"/>
-        <text class="t" x="1045" y="372">文件系统</text>
-        <text class="s" x="1045" y="391">仓库、依赖、构建产物</text>
-        <rect class="box" x="675" y="414" width="240" height="52" rx="5"/>
-        <text class="t" x="795" y="436">沙箱内的存档机制</text>
-        <text class="s" x="795" y="455">文件分层、进程模板</text>
-        <rect class="box" x="925" y="414" width="240" height="52" rx="5"/>
-        <text class="t" x="1045" y="436">宿主机存档调度</text>
-        <text class="s" x="1045" y="455">何时存、存什么、排队</text>
-        <rect class="box" x="675" y="478" width="240" height="44" rx="5"/>
-        <text class="t" x="795" y="505">客户机内核：overlayfs、fork</text>
-        <rect class="box" x="925" y="478" width="240" height="44" rx="5"/>
-        <text class="t" x="1045" y="505">宿主机内核：eBPF、ZFS、CRIU</text>
-
-        <!-- agent <-> runtime -->
-        <line class="ar" x1="540" y1="248" x2="540" y2="348" marker-end="url(#ah)"/>
-        <text class="al end" x="532" y="302">LLM request</text>
-        <line class="ar" x1="600" y1="352" x2="600" y2="252" marker-end="url(#ah)"/>
-        <text class="al start" x="606" y="302">回复</text>
-        <line class="ar" x1="700" y1="248" x2="700" y2="348" marker-end="url(#ah)"/>
-        <text class="al end" x="692" y="302">命令</text>
-        <line class="ar" x1="722" y1="352" x2="722" y2="252" marker-end="url(#ah)"/>
-        <text class="al start" x="730" y="302">执行结果</text>
-
-        <!-- hardware layer -->
-        <rect class="box" x="175" y="640" width="230" height="62" rx="6"/>
-        <text class="t" x="290" y="667">GPU 集群</text>
-        <text class="s" x="290" y="687">A100、B200，另有 TPU、PIM</text>
-        <rect class="box" x="425" y="640" width="210" height="62" rx="6"/>
-        <text class="t" x="530" y="667">数据中心电力</text>
-        <text class="s" x="530" y="687">兆瓦到吉瓦级</text>
-        <rect class="box" x="675" y="640" width="230" height="62" rx="6"/>
-        <text class="t" x="790" y="667">CPU 主机</text>
-        <text class="s" x="790" y="687">沙箱、工具执行</text>
-        <rect class="box" x="925" y="640" width="240" height="62" rx="6"/>
-        <text class="t" x="1045" y="667">存储</text>
-        <text class="s" x="1045" y="687">NVMe 固态盘、云盘</text>
-        <line class="ar" x1="405" y1="671" x2="421" y2="671" marker-end="url(#ah)"/>
-
-        <line class="ar" x1="290" y1="566" x2="290" y2="636" marker-end="url(#ah)"/>
-        <text class="al start" x="298" y="594">运行于</text>
-        <line class="ar" x1="790" y1="566" x2="790" y2="636" marker-end="url(#ah)"/>
-        <text class="al start" x="798" y="594">运行于</text>
-        <line class="ar" x1="1045" y1="566" x2="1045" y2="636" marker-end="url(#ah)"/>
-        <text class="al start" x="1053" y="594">镜像、快照</text>
-
-        <!-- paper scopes -->
-        <path class="scope ct-c" d="M462,164 H742 V262 H650 V716 H154 V282 H462 Z"/>
-        <path class="scope ls-c" d="M163,326 H637 V578 H414 V710 H163 Z"/>
-        <rect class="scope ab-c" x="162" y="22" width="806" height="78" rx="8"/>
-        <rect class="scope as-c" x="167" y="345" width="466" height="128" rx="6"/>
-        <rect class="scope db-c" x="667" y="407" width="252" height="122" rx="6"/>
-        <rect class="scope cr-c" x="921" y="407" width="252" height="122" rx="6"/>
-
-        <a href="#crab" aria-label="Crab">
-          <rect class="node cr-c" x="486" y="257" width="108" height="24" rx="4"/>
-          <text class="tag cr-t" x="540" y="274">Crab 代理</text>
-        </a>
-        <a href="#agentboard" aria-label="AgentBoard">
-          <text class="tag ab-t start" x="985" y="56">AgentBoard</text>
-          <text class="al start" x="985" y="76">测大模型当智能体的能力</text>
-        </a>
-        <a href="#llmservingsim" aria-label="LLMServingSim 2.0">
-          <text class="tag ls-t start" x="424" y="592">LLMServingSim 2.0</text>
-          <text class="al start" x="424" y="606">模拟整个服务层和异构硬件</text>
-        </a>
-        <a href="#agentservesim" aria-label="AgentServeSim">
-          <text class="al start" x="175" y="549"><tspan class="tag as-t">AgentServeSim</tspan>：在 CPU 上模拟这一层，搜索保留与调度策略</text>
-        </a>
-        <a href="#deltabox" aria-label="DeltaBox">
-          <text class="al start" x="675" y="549"><tspan class="tag db-t">DeltaBox</tspan>：只存变化，毫秒级回滚</text>
-        </a>
-        <a href="#crab" aria-label="Crab">
-          <text class="al start" x="925" y="549"><tspan class="tag cr-t">Crab</tspan>：按需存档，宿主机统一调度</text>
-        </a>
-        <a href="#cost-of-reasoning" aria-label="The Cost of Dynamic Reasoning">
-          <text class="al start" x="160" y="756"><tspan class="tag ct-t">The Cost of Dynamic Reasoning</tspan>：测量红色虚线内从调用次数到数据中心功率的开销</text>
-        </a>
+      <svg viewBox="0 0 1200 1100" role="img" aria-label="智能体系统的层次与 29 篇论文的位置：任务与评测、智能体、运行时（推理服务与工具沙箱）、硬件与数据中心，以及跨层测量。彩色虚线框是最初六篇论文的研究范围，实心标签是有单独页面的论文，描边标签是速览中的论文。">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+      <rect class="band" x="12" y="12" width="1176" height="140" rx="8"/>
+      <text class="lyr" x="28" y="72">任务与评测</text>
+      <rect class="band" x="12" y="166" width="1176" height="172" rx="8"/>
+      <text class="lyr" x="28" y="236">智能体</text>
+      <rect class="band" x="12" y="352" width="1176" height="370" rx="8"/>
+      <text class="lyr" x="28" y="530">运行时</text>
+      <rect class="band" x="12" y="826" width="1176" height="120" rx="8"/>
+      <text class="lyr" x="28" y="890">硬件与数据中心</text>
+      <rect class="band" x="12" y="960" width="1176" height="128" rx="8"/>
+      <text class="lyr" x="28" y="1018">跨层测量</text>
+      <rect class="box" x="170" y="30" width="460" height="62" rx="6"/><text class="t" x="400" y="57">测试环境：家务、游戏、网页、工具</text><text class="s" x="400" y="77">多轮交互，部分可观测</text>
+      <rect class="box" x="660" y="30" width="300" height="62" rx="6"/><text class="t" x="810" y="57">评测指标</text><text class="s" x="810" y="77">成功率、进度率、子能力</text>
+      <a href="#brief-tau-bench" aria-label="τ-bench"><rect class="chip o" x="170" y="113" width="61" height="21" rx="10.5"/><text class="chip-t o" x="200.5" y="128">τ-bench</text></a>
+      <a href="#brief-swe-bench-pro" aria-label="SWE-Bench Pro"><rect class="chip o" x="237" y="113" width="104" height="21" rx="10.5"/><text class="chip-t o" x="289.0" y="128">SWE-Bench Pro</text></a>
+      <a href="#brief-mlr-bench" aria-label="MLR-Bench"><rect class="chip o" x="347" y="113" width="79" height="21" rx="10.5"/><text class="chip-t o" x="386.5" y="128">MLR-Bench</text></a>
+      <a href="#brief-trace" aria-label="TRACE"><rect class="chip o" x="432" y="113" width="55" height="21" rx="10.5"/><text class="chip-t o" x="459.5" y="128">TRACE</text></a>
+      <a href="#brief-agentsuite" aria-label="AgentSuite"><rect class="chip o" x="493" y="113" width="83" height="21" rx="10.5"/><text class="chip-t o" x="534.5" y="128">AgentSuite</text></a>
+      <text class="al start" x="582" y="127">评测基准</text>
+      <rect class="box" x="170" y="186" width="250" height="76" rx="6"/><text class="t" x="295" y="218">推理与搜索策略</text><text class="s" x="295" y="239">ReAct、Reflexion、LATS、MCTS</text>
+      <rect class="box strong" x="470" y="186" width="260" height="76" rx="6"/><text class="t" x="600" y="218">智能体主循环</text><text class="s" x="600" y="239">推理、调工具、读结果，循环</text>
+      <rect class="box" x="800" y="186" width="230" height="76" rx="6"/><text class="t" x="915" y="218">强化学习训练</text><text class="s" x="915" y="239">从相同状态开出多条 rollout</text>
+      <line class="ar" x1="420" y1="224" x2="466" y2="224" marker-end="url(#ah)"/><text class="al" x="443" y="216">控制</text>
+      <line class="ar" x1="800" y1="224" x2="734" y2="224" marker-end="url(#ah)"/><text class="al" x="769" y="216">批量运行</text>
+      <line class="ar" x1="680" y1="94" x2="680" y2="182" marker-end="url(#ah)"/><text class="al end" x="672" y="150">目标、观察</text>
+      <line class="ar" x1="712" y1="184" x2="712" y2="96" marker-end="url(#ah)"/><text class="al start" x="720" y="150">动作</text>
+      <a href="#brief-aios" aria-label="AIOS"><rect class="chip o" x="170" y="303" width="47" height="21" rx="10.5"/><text class="chip-t o" x="193.5" y="318">AIOS</text></a>
+      <text class="al start" x="223" y="317">智能体内核</text>
+      <a href="#murakkab" aria-label="Murakkab"><rect class="chip f-gs" x="296" y="303" width="69" height="21" rx="10.5"/><text class="chip-t" x="330.5" y="318">Murakkab</text></a>
+      <text class="al start" x="371" y="317">工作流编排</text>
+      <a href="#brief-tree-grpo" aria-label="Tree-GRPO"><rect class="chip o" x="800" y="303" width="81" height="21" rx="10.5"/><text class="chip-t o" x="840.5" y="318">Tree-GRPO</text></a>
+      <text class="al start" x="887" y="317">按步分叉的 RL 采样</text>
+      <rect class="col" x="160" y="360" width="480" height="352" rx="6"/><text class="ct" x="175" y="381">大模型推理服务</text>
+      <rect class="col" x="660" y="360" width="520" height="352" rx="6"/><text class="ct" x="675" y="381">工具执行沙箱（容器或轻量虚拟机）</text>
+      <rect class="box" x="175" y="392" width="140" height="50" rx="5"/><text class="t" x="245" y="412">KV 缓存保留</text><text class="s" x="245" y="431">工具间隙留不留</text>
+      <rect class="box" x="330" y="392" width="140" height="50" rx="5"/><text class="t" x="400" y="412">排队调度</text><text class="s" x="400" y="431">谁先执行</text>
+      <rect class="box" x="485" y="392" width="140" height="50" rx="5"/><text class="t" x="555" y="412">实例路由</text><text class="s" x="555" y="431">派到哪台机器</text>
+      <rect class="box" x="175" y="454" width="450" height="52" rx="5"/><text class="t" x="400" y="476">推理引擎（vLLM）</text><text class="s" x="400" y="495">prefill、decode、连续批处理、前缀缓存</text>
+      <rect class="box" x="175" y="518" width="450" height="44" rx="5"/><text class="t" x="400" y="545">GPU 显存：模型权重与 KV 缓存</text>
+      <rect class="box" x="675" y="392" width="240" height="50" rx="5"/><text class="t" x="795" y="412">智能体或工具进程</text><text class="s" x="795" y="431">内存：对话、中间结果</text>
+      <rect class="box" x="925" y="392" width="240" height="50" rx="5"/><text class="t" x="1045" y="412">文件系统</text><text class="s" x="1045" y="431">仓库、依赖、构建产物</text>
+      <rect class="box" x="675" y="454" width="240" height="52" rx="5"/><text class="t" x="795" y="476">沙箱内的存档机制</text><text class="s" x="795" y="495">文件分层、进程模板</text>
+      <rect class="box" x="925" y="454" width="240" height="52" rx="5"/><text class="t" x="1045" y="476">宿主机存档调度</text><text class="s" x="1045" y="495">何时存、存什么、排队</text>
+      <rect class="box" x="675" y="518" width="240" height="44" rx="5"/><text class="t" x="795" y="545">客户机内核：overlayfs、fork</text>
+      <rect class="box" x="925" y="518" width="240" height="44" rx="5"/><text class="t" x="1045" y="545">宿主机内核：eBPF、ZFS、CRIU</text>
+      <line class="ar" x1="540" y1="262" x2="540" y2="388" marker-end="url(#ah)"/><text class="al end" x="532" y="342">LLM request</text>
+      <line class="ar" x1="600" y1="392" x2="600" y2="266" marker-end="url(#ah)"/><text class="al start" x="606" y="342">回复</text>
+      <line class="ar" x1="700" y1="262" x2="700" y2="388" marker-end="url(#ah)"/><text class="al end" x="692" y="342">命令</text>
+      <line class="ar" x1="722" y1="392" x2="722" y2="266" marker-end="url(#ah)"/><text class="al start" x="730" y="342">执行结果</text>
+      <rect class="box" x="175" y="852" width="230" height="62" rx="6"/><text class="t" x="290" y="879">GPU 集群</text><text class="s" x="290" y="899">A100、B200，另有 TPU、PIM</text>
+      <rect class="box" x="425" y="852" width="210" height="62" rx="6"/><text class="t" x="530" y="879">数据中心电力</text><text class="s" x="530" y="899">兆瓦到吉瓦级</text>
+      <rect class="box" x="675" y="852" width="230" height="62" rx="6"/><text class="t" x="790" y="879">CPU 主机</text><text class="s" x="790" y="899">沙箱、工具执行</text>
+      <rect class="box" x="925" y="852" width="240" height="62" rx="6"/><text class="t" x="1045" y="879">存储</text><text class="s" x="1045" y="899">NVMe 固态盘、云盘</text>
+      <line class="ar" x1="405" y1="883" x2="421" y2="883" marker-end="url(#ah)"/>
+      <line class="ar" x1="290" y1="714" x2="290" y2="848" marker-end="url(#ah)"/><text class="al start" x="298" y="752">运行于</text>
+      <line class="ar" x1="790" y1="714" x2="790" y2="848" marker-end="url(#ah)"/><text class="al start" x="798" y="752">运行于</text>
+      <line class="ar" x1="1045" y1="714" x2="1045" y2="848" marker-end="url(#ah)"/><text class="al start" x="1053" y="752">镜像、快照</text>
+      <path class="scope ct-c" d="M462,178 H742 V276 H650 V926 H154 V346 H462 Z"/>
+      <path class="scope ls-c" d="M163,366 H637 V720 H414 V920 H163 Z"/>
+      <rect class="scope ab-c" x="162" y="22" width="806" height="78" rx="8"/>
+      <rect class="scope as-c" x="167" y="385" width="466" height="128" rx="6"/>
+      <rect class="scope db-c" x="667" y="447" width="252" height="122" rx="6"/>
+      <rect class="scope cr-c" x="921" y="447" width="252" height="122" rx="6"/>
+      <a href="#crab" aria-label="Crab"><rect class="node cr-c" x="486" y="270" width="108" height="24" rx="4"/><text class="tag cr-t" x="540" y="287">Crab 代理</text></a>
+      <a href="#agentboard" aria-label="AgentBoard"><text class="tag ab-t start" x="985" y="56">AgentBoard</text><text class="al start" x="985" y="76">测大模型当智能体的能力</text></a>
+      <a href="#llmservingsim" aria-label="LLMServingSim 2.0"><text class="tag ls-t start" x="424" y="740">LLMServingSim 2.0</text><text class="al start" x="424" y="756">模拟整个服务层和异构硬件</text></a>
+      <a href="#agentservesim" aria-label="AgentServeSim"><text class="al start" x="175" y="589"><tspan class="tag as-t">AgentServeSim</tspan>：在 CPU 上模拟这一层，搜索保留与调度策略</text></a>
+      <a href="#deltabox" aria-label="DeltaBox"><text class="al start" x="675" y="589"><tspan class="tag db-t">DeltaBox</tspan>：只存变化，毫秒级回滚</text></a>
+      <a href="#crab" aria-label="Crab"><text class="al start" x="925" y="589"><tspan class="tag cr-t">Crab</tspan>：按需存档，宿主机统一调度</text></a>
+      <a href="#agentix" aria-label="Agentix"><rect class="chip f-gs" x="175" y="601" width="62" height="21" rx="10.5"/><text class="chip-t" x="206.0" y="616">Agentix</text></a>
+      <text class="al start" x="243" y="615">按整个程序排队调度，多引擎时保住前缀缓存</text>
+      <a href="#conserve" aria-label="ConServe"><rect class="chip f-gs" x="175" y="627" width="70" height="21" rx="10.5"/><text class="chip-t" x="210.0" y="642">ConServe</text></a>
+      <text class="al start" x="251" y="641">以会话为单位做 prefill 与 decode 分离</text>
+      <a href="#cachescout" aria-label="CacheScout"><rect class="chip f-gs" x="175" y="653" width="83" height="21" rx="10.5"/><text class="chip-t" x="216.5" y="668">CacheScout</text></a>
+      <text class="al start" x="264" y="667">学习执行规律来淘汰和预热 KV 缓存</text>
+      <a href="#brief-sglang" aria-label="SGLang"><rect class="chip o" x="175" y="681" width="59" height="21" rx="10.5"/><text class="chip-t o" x="204.5" y="696">SGLang</text></a>
+      <a href="#brief-mooncake" aria-label="Mooncake"><rect class="chip o" x="240" y="681" width="69" height="21" rx="10.5"/><text class="chip-t o" x="274.5" y="696">Mooncake</text></a>
+      <a href="#brief-jitserve" aria-label="JITServe"><rect class="chip o" x="315" y="681" width="73" height="21" rx="10.5"/><text class="chip-t o" x="351.5" y="696">JITServe</text></a>
+      <a href="#brief-servegen" aria-label="ServeGen"><rect class="chip o" x="394" y="681" width="70" height="21" rx="10.5"/><text class="chip-t o" x="429.0" y="696">ServeGen</text></a>
+      <text class="al start" x="470" y="695">通用推理服务与负载</text>
+      <a href="#specbox" aria-label="SpecBox"><rect class="chip f-gb" x="675" y="601" width="64" height="21" rx="10.5"/><text class="chip-t" x="707.0" y="616">SpecBox</text></a>
+      <text class="al start" x="745" y="615">生成过程中预测要用的沙箱并提前启动</text>
+      <a href="#yolofs" aria-label="YoloFS"><rect class="chip f-gb" x="675" y="627" width="59" height="21" rx="10.5"/><text class="chip-t" x="704.5" y="642">YoloFS</text></a>
+      <text class="al start" x="740" y="641">文件系统层暂存修改、快照回溯、按路径授权</text>
+      <a href="#safe-resume" aria-label="Safe to Resume"><rect class="chip f-gb" x="675" y="653" width="103" height="21" rx="10.5"/><text class="chip-t" x="726.5" y="668">Safe to Resume</text></a>
+      <text class="al start" x="784" y="667">回滚之后安全相关的状态是否仍成立</text>
+      <a href="#simthesizer" aria-label="Simthesizer"><rect class="chip f-gx" x="424" y="771" width="88" height="21" rx="10.5"/><text class="chip-t" x="468.0" y="786">Simthesizer</text></a>
+      <text class="al start" x="518" y="785">可由编码智能体扩展</text>
+      <a href="#brief-vidur" aria-label="Vidur"><rect class="chip o" x="424" y="797" width="50" height="21" rx="10.5"/><text class="chip-t o" x="449.0" y="812">Vidur</text></a>
+      <text class="al start" x="480" y="811">搜索部署配置</text>
+      <a href="#cost-of-reasoning" aria-label="The Cost of Dynamic Reasoning"><text class="al start" x="170" y="990"><tspan class="tag ct-t">The Cost of Dynamic Reasoning</tspan>：测量红色虚线内从调用次数到数据中心功率的开销</text></a>
+      <a href="#agentsysbench" aria-label="AgentSysBench"><rect class="chip f-gm" x="170" y="1003" width="104" height="21" rx="10.5"/><text class="chip-t" x="222.0" y="1018">AgentSysBench</text></a>
+      <text class="al start" x="280" y="1017">在多种智能体负载上分解模型、工具、会话状态各自的延迟、内存和费用</text>
+      <a href="#sessions" aria-label="From Requests to Sessions"><rect class="chip f-gm" x="170" y="1031" width="172" height="21" rx="10.5"/><text class="chip-t" x="256.0" y="1046">From Requests to Sessions</text></a>
+      <text class="al start" x="348" y="1045">人类驱动的生产负载：会话结构与前缀缓存该保留多久</text>
+      <a href="#xperf" aria-label="XPerf"><rect class="chip f-gm" x="170" y="1059" width="51" height="21" rx="10.5"/><text class="chip-t" x="195.5" y="1074">XPerf</text></a>
+      <text class="al start" x="227" y="1073">重放智能体轨迹，给推理服务系统做基准测试</text>
       </svg>
       </div>
-      <figcaption>自上而下四层：任务与评测、智能体、运行时（左为大模型推理服务，右为工具执行沙箱）、硬件与数据中心。灰色箭头是一轮交互中的数据流向。彩色虚线框是各篇论文的研究范围，点击框旁的论文名进入对应解读。</figcaption>
+      <figcaption>自上而下四层：任务与评测、智能体、运行时（左为大模型推理服务，右为工具执行沙箱）、硬件与数据中心，最下面一栏是跨越多层的测量工作。灰色箭头是一轮交互中的数据流向。彩色虚线框是最初六篇论文的研究范围；实心圆角标签是有单独解读页的论文，描边标签是速览页中的论文。点击论文名进入对应解读。</figcaption>
     </figure>
 
     <p><b>怎么读这张图。</b>一个智能体任务从最上层开始：测试环境给出目标和初始观察，智能体主循环据此工作，最后把动作交回环境。主循环每一轮做两件事，一是把对话上下文作为 LLM request 发给大模型推理服务，拿回模型的回复；二是按回复里的指令向工具沙箱发出命令，拿回执行结果。这两条往返交替进行，一个任务往往要几十轮，每一轮的上下文都比上一轮更长。推理服务运行在 GPU 集群上，沙箱运行在 CPU 主机和存储上，GPU 的耗电最终汇总为数据中心的电力需求。左侧的搜索策略和右侧的强化学习训练都建立在主循环之上：前者在一个任务里尝试多条路线、走错就退回，后者从相同的起点批量运行大量任务来训练模型。</p>
@@ -165,6 +115,15 @@
     <p><a class="plink as-t" href="#agentservesim">AgentServeSim</a> 位于推理服务这一列，建在 LLMServingSim 2.0 之上。推理引擎要管理显存里的 KV 缓存、实例内的等待队列和多个实例之间的分配，因此要做三个决定：工具间隙里这个 program 的 KV 缓存留不留、下一个 turn 在队列里排第几、派到哪台机器。它把这三处做成可替换的策略，并用 CPU 上的模拟器代替真实 GPU 来评估效果，再让大模型在模拟器里自动改写策略。</p>
     <p><a class="plink db-t" href="#deltabox">DeltaBox</a> 位于沙箱内部。搜索策略需要随时退回历史节点，强化学习训练需要从一个准备好的状态开出很多沙箱，两者都要求快速保存和恢复沙箱里的文件和进程。DeltaBox 修改了沙箱的客户机内核：文件用可在运行中加层的 overlayfs，进程用冻结的 fork 模板，使保存和恢复都在毫秒级完成。</p>
     <p><a class="plink cr-t" href="#crab">Crab</a> 在图中出现在两处。一处是智能体与推理服务之间的代理，它截获 LLM request，从而知道一轮何时结束、模型何时在思考；另一处是宿主机上的存档调度和内核观察，它用 eBPF 看清每一轮在沙箱里实际改了什么，决定这一轮存不存、存多少，并统一安排一台机器上所有沙箱的存档任务。底层的保存和恢复直接使用现成的 CRIU 和 ZFS。</p>
+
+    <h3 class="ovh">后续加入的 23 篇</h3>
+    <p>下面按层次说明后来加入的论文各自所处的位置和研究的问题。有单独页面的论文用彩色链接，速览页中的论文用普通链接。</p>
+    <p><b>任务与评测。</b><a class="plink" href="#brief-tau-bench">τ-bench</a>、<a class="plink" href="#brief-swe-bench-pro">SWE-Bench Pro</a>、<a class="plink" href="#brief-mlr-bench">MLR-Bench</a>、<a class="plink" href="#brief-trace">TRACE</a>、<a class="plink" href="#brief-agentsuite">AgentSuite</a> 都在最上层，和 AgentBoard 一样关心的是“测什么、怎样算对”：τ-bench 是要和模拟用户对话、遵守规章的客服任务；SWE-Bench Pro 是更大、更难、不易被训练数据污染的代码修改任务；MLR-Bench 让智能体做开放式的机器学习研究；TRACE 让智能体把旧题改造成带可复现解题轨迹的难题；AgentSuite 反过来自动审计基准本身的错误。</p>
+    <p><b>智能体层。</b><a class="plink" href="#brief-tree-grpo">Tree-GRPO</a> 位于强化学习训练，把轨迹采样改成按步分叉的树。<a class="plink" href="#brief-aios">AIOS</a> 在智能体与模型、工具之间加一层“内核”，统一调度对模型和工具的访问。<a class="plink gs-t" href="#murakkab">Murakkab</a> 站在工作流层面：开发者只描述子任务和数据流，平台根据 SLO 同时选择模型、硬件和实例数，所以它的决定一直延伸到推理服务和硬件。</p>
+    <p><b>推理服务。</b>三篇单独讲解的论文都把智能体的多轮结构交给推理服务利用，只是落在不同的位置。<a class="plink gs-t" href="#agentix">Agentix</a> 在排队调度和实例路由：以整个程序的累计服务时间排优先级，多引擎时把长调用固定到程序所在的引擎。<a class="plink gs-t" href="#conserve">ConServe</a> 在 prefill 与 decode 分离的部署里，以会话为单位决定放在哪台 decode 副本上，只依据看得到的量而不做预测。<a class="plink gs-t" href="#cachescout">CacheScout</a> 在 KV 缓存的淘汰和预热，在线学习多智能体系统中谁接着谁执行。速览中的 <a class="plink" href="#brief-sglang">SGLang</a> 和 <a class="plink" href="#brief-mooncake">Mooncake</a> 是推理引擎和拆分式架构的基础系统，<a class="plink" href="#brief-jitserve">JITServe</a> 是不针对智能体的 SLO 调度，<a class="plink" href="#brief-servegen">ServeGen</a> 刻画阿里云上非智能体的线上负载。</p>
+    <p><b>模拟器。</b><a class="plink gx-t" href="#simthesizer">Simthesizer</a> 和速览中的 <a class="plink" href="#brief-vidur">Vidur</a> 与 LLMServingSim 2.0 处在图中相同的位置，都在 CPU 上模拟推理服务。Simthesizer 关心的是模拟器怎样被编码智能体按需扩展，它在实验中直接与 LLMServingSim 2.0、Vidur 等对比。</p>
+    <p><b>工具沙箱。</b><a class="plink gb-t" href="#specbox">SpecBox</a> 处理沙箱的启动：模型还在生成时就推测要用哪个沙箱并提前启动。<a class="plink gb-t" href="#yolofs">YoloFS</a> 在沙箱的文件系统这一格，把修改先暂存、每条命令后快照、按路径授权，让用户和智能体看得到并撤得回对文件的影响。<a class="plink gb-t" href="#safe-resume">Safe to Resume</a> 研究存档机制的安全：回滚把状态恢复得正确时，安全相关的判断、授权和外部效果是否仍然成立。</p>
+    <p><b>跨层测量。</b><a class="plink gm-t" href="#agentsysbench">AgentSysBench</a>、<a class="plink gm-t" href="#sessions">From Requests to Sessions</a>、<a class="plink gm-t" href="#xperf">XPerf</a> 不修改某一层，而是测量智能体负载在各层上的表现：AgentSysBench 把延迟、内存和费用拆到模型、工具和会话状态上；From Requests to Sessions 分析人类驱动的生产负载，关注会话结构和前缀缓存应保留多久；XPerf 重放智能体轨迹，给推理服务系统做基准测试。</p>
   </section>
 </div>
 </article>

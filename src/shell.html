@@ -21,6 +21,10 @@
   --ls: #0b7a96;
   --ct: #a3303f;
   --cr: #6a4c9c;
+  --gm: #8e3f8f;
+  --gs: #b4500f;
+  --gx: #4f7a1c;
+  --gb: #b3305f;
   --good: #1f7a46;
   --bad: #b1352b;
   --mine: #a86f00;
@@ -33,14 +37,14 @@
   :root:not([data-theme="light"]) {
     --bg: #0f1318; --surface: #171c24; --ink: #e5e9ef; --ink-2: #bcc5d1; --muted: #8b95a4;
     --rule: #2a313c; --soft: #1e242e; --fig-bg: #f3f4f6; --site: #8db3e2;
-    --ab: #4cc49e; --db: #86aaf0; --ls: #4fc3d9; --as: #e2b04c; --ct: #f0808f; --cr: #b59ae0; --good: #5fcf8e; --bad: #f08a80; --mine: #e2b04c;
+    --ab: #4cc49e; --db: #86aaf0; --ls: #4fc3d9; --as: #e2b04c; --ct: #f0808f; --cr: #b59ae0; --gm: #d58fd5; --gs: #f0975a; --gx: #a6cc62; --gb: #f07aa6; --good: #5fcf8e; --bad: #f08a80; --mine: #e2b04c;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1318; --surface: #171c24; --ink: #e5e9ef; --ink-2: #bcc5d1; --muted: #8b95a4;
   --rule: #2a313c; --soft: #1e242e; --fig-bg: #f3f4f6; --site: #8db3e2;
-  --ab: #4cc49e; --db: #86aaf0; --ls: #4fc3d9; --as: #e2b04c; --ct: #f0808f; --cr: #b59ae0; --good: #5fcf8e; --bad: #f08a80; --mine: #e2b04c;
+  --ab: #4cc49e; --db: #86aaf0; --ls: #4fc3d9; --as: #e2b04c; --ct: #f0808f; --cr: #b59ae0; --gm: #d58fd5; --gs: #f0975a; --gx: #a6cc62; --gb: #f07aa6; --good: #5fcf8e; --bad: #f08a80; --mine: #e2b04c;
   color-scheme: dark;
 }
 [data-paper="agentboard"] { --pa: var(--ab); }
@@ -49,6 +53,11 @@
 [data-paper="agentservesim"] { --pa: var(--as); }
 [data-paper="cost-of-reasoning"] { --pa: var(--ct); }
 [data-paper="crab"] { --pa: var(--cr); }
+[data-paper="agentsysbench"], [data-paper="sessions"], [data-paper="xperf"] { --pa: var(--gm); }
+[data-paper="murakkab"], [data-paper="agentix"], [data-paper="conserve"], [data-paper="cachescout"] { --pa: var(--gs); }
+[data-paper="simthesizer"] { --pa: var(--gx); }
+[data-paper="specbox"], [data-paper="yolofs"], [data-paper="safe-resume"] { --pa: var(--gb); }
+[data-paper="briefs"] { --pa: var(--site); }
 
 * { box-sizing: border-box; }
 main { display: block; overflow-x: clip; }
@@ -64,11 +73,18 @@ code { font-family: var(--f-mono); font-size: .88em; background: var(--soft); pa
 .topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--rule); }
 .topbar-inner { max-width: 1320px; margin: 0 auto; display: flex; align-items: center; gap: 18px; padding-block: 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
-.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
-.tabs::-webkit-scrollbar { display: none; }
-.tab { white-space: nowrap; text-decoration: none; color: var(--ink-2); font-size: 13.5px; font-weight: 500; padding: 6px 12px; border-bottom: 2px solid transparent; }
+.topbar-inner { flex-wrap: wrap; row-gap: 0; }
+.groups { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1 0 100%; border-top: 1px solid var(--rule); padding-top: 2px; margin-top: 6px; }
+.tabs[hidden] { display: none; }
+.groups::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }
+.gtab { white-space: nowrap; text-decoration: none; color: var(--ink-2); font-size: 13.5px; font-weight: 700; padding: 5px 11px; border-radius: 4px; }
+.gtab:hover { color: var(--ink); background: var(--soft); }
+.gtab[aria-current="true"] { background: color-mix(in srgb, var(--pa) 14%, var(--surface)); color: var(--pa); }
+.tab { white-space: nowrap; text-decoration: none; color: var(--ink-2); font-size: 13px; font-weight: 500; padding: 5px 12px; border-bottom: 2px solid transparent; }
 .tab:hover { color: var(--ink); }
 .tab[aria-current="page"] { border-bottom-color: var(--pa); color: var(--pa); }
+.view [id] { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 104px); }
 
 /* canvas */
 .frame { max-width: 1320px; margin: 0 auto; padding-block: 20px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -113,6 +129,9 @@ code { font-family: var(--f-mono); font-size: .88em; background: var(--soft); pa
 .flow .step h3 { margin: 0; font-size: 12px; letter-spacing: .06em; color: var(--pa); font-weight: 700; }
 .flow .step p { font-size: 13px; line-height: 1.7; }
 .flow .step.key { background: color-mix(in srgb, var(--pa) 10%, var(--surface)); border-color: var(--pa); }
+ol.steps { margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }
+ol.steps li { line-height: 1.75; }
+ol.steps li::marker { color: var(--pa); font-weight: 700; }
 
 .figgrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
 .callouts { list-style: none; margin: 0; padding: 0; font-size: 13px; line-height: 1.7; counter-reset: c; }
@@ -245,6 +264,14 @@ pre.code b { color: var(--pa); font-weight: 500; }
 .arch a:hover .tag, .arch a:hover tspan.tag { text-decoration: underline; }
 .ab-c { stroke: var(--ab); } .db-c { stroke: var(--db); } .ls-c { stroke: var(--ls); } .as-c { stroke: var(--as); } .ct-c { stroke: var(--ct); } .cr-c { stroke: var(--cr); }
 .ab-t { fill: var(--ab); color: var(--ab); } .db-t { fill: var(--db); color: var(--db); } .ls-t { fill: var(--ls); color: var(--ls); } .as-t { fill: var(--as); color: var(--as); } .ct-t { fill: var(--ct); color: var(--ct); } .cr-t { fill: var(--cr); color: var(--cr); }
+.arch .chip { stroke-width: 1.2; }
+.arch .chip.o { fill: var(--surface); stroke: var(--muted); }
+.arch .chip.f-gm { fill: var(--gm); stroke: var(--gm); } .arch .chip.f-gs { fill: var(--gs); stroke: var(--gs); } .arch .chip.f-gx { fill: var(--gx); stroke: var(--gx); } .arch .chip.f-gb { fill: var(--gb); stroke: var(--gb); }
+.arch .chip-t { font-size: 11.5px; font-weight: 700; text-anchor: middle; fill: var(--surface); }
+.arch .chip-t.o { fill: var(--ink-2); }
+.arch a:hover .chip-t { text-decoration: underline; }
+.gm-t { color: var(--gm); } .gs-t { color: var(--gs); } .gx-t { color: var(--gx); } .gb-t { color: var(--gb); }
+.ovh { margin: 22px 0 0; font-size: 14.5px; font-weight: 700; }
 a.plink { font-weight: 700; text-decoration: none; }
 a.plink:hover { text-decoration: underline; }
 
@@ -293,14 +320,32 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
 <header class="topbar">
   <div class="topbar-inner">
     <span class="brand">论文精读</span>
+    <nav class="groups" aria-label="分组">
+      <a class="gtab" href="#overview" data-group="overview">总览</a>
+      <a class="gtab" href="#agentboard" data-group="eval">评测与负载</a>
+      <a class="gtab" href="#murakkab" data-group="serve">编排与推理服务</a>
+      <a class="gtab" href="#llmservingsim" data-group="sim">模拟器</a>
+      <a class="gtab" href="#deltabox" data-group="box">沙箱与状态</a>
+      <a class="gtab" href="#briefs" data-group="briefs">速览</a>
+    </nav>
     <nav class="tabs" aria-label="论文">
-      <a class="tab" href="#overview" data-view="overview">总览</a>
-      <a class="tab" href="#agentboard" data-view="agentboard" data-paper="agentboard">AgentBoard</a>
-      <a class="tab" href="#deltabox" data-view="deltabox" data-paper="deltabox">DeltaBox</a>
-      <a class="tab" href="#llmservingsim" data-view="llmservingsim" data-paper="llmservingsim">LLMServingSim 2.0</a>
-      <a class="tab" href="#agentservesim" data-view="agentservesim" data-paper="agentservesim">AgentServeSim</a>
-      <a class="tab" href="#cost-of-reasoning" data-view="cost-of-reasoning" data-paper="cost-of-reasoning">The Cost of Dynamic Reasoning</a>
-      <a class="tab" href="#crab" data-view="crab" data-paper="crab">Crab</a>
+      <a class="tab" href="#agentboard" data-view="agentboard" data-group="eval">AgentBoard</a>
+      <a class="tab" href="#cost-of-reasoning" data-view="cost-of-reasoning" data-group="eval">The Cost of Dynamic Reasoning</a>
+      <a class="tab" href="#agentsysbench" data-view="agentsysbench" data-group="eval">AgentSysBench</a>
+      <a class="tab" href="#sessions" data-view="sessions" data-group="eval">From Requests to Sessions</a>
+      <a class="tab" href="#xperf" data-view="xperf" data-group="eval">XPerf</a>
+      <a class="tab" href="#murakkab" data-view="murakkab" data-group="serve">Murakkab</a>
+      <a class="tab" href="#agentix" data-view="agentix" data-group="serve">Agentix</a>
+      <a class="tab" href="#conserve" data-view="conserve" data-group="serve">ConServe</a>
+      <a class="tab" href="#cachescout" data-view="cachescout" data-group="serve">CacheScout</a>
+      <a class="tab" href="#llmservingsim" data-view="llmservingsim" data-group="sim">LLMServingSim 2.0</a>
+      <a class="tab" href="#agentservesim" data-view="agentservesim" data-group="sim">AgentServeSim</a>
+      <a class="tab" href="#simthesizer" data-view="simthesizer" data-group="sim">Simthesizer</a>
+      <a class="tab" href="#deltabox" data-view="deltabox" data-group="box">DeltaBox</a>
+      <a class="tab" href="#crab" data-view="crab" data-group="box">Crab</a>
+      <a class="tab" href="#specbox" data-view="specbox" data-group="box">SpecBox</a>
+      <a class="tab" href="#yolofs" data-view="yolofs" data-group="box">YoloFS</a>
+      <a class="tab" href="#safe-resume" data-view="safe-resume" data-group="box">Safe to Resume</a>
     </nav>
   </div>
 </header>
@@ -313,6 +358,18 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
 <!-- PAPER:agentservesim -->
 <!-- PAPER:cost-of-reasoning -->
 <!-- PAPER:crab -->
+<!-- PAPER:agentsysbench -->
+<!-- PAPER:sessions -->
+<!-- PAPER:xperf -->
+<!-- PAPER:murakkab -->
+<!-- PAPER:agentix -->
+<!-- PAPER:conserve -->
+<!-- PAPER:cachescout -->
+<!-- PAPER:simthesizer -->
+<!-- PAPER:specbox -->
+<!-- PAPER:yolofs -->
+<!-- PAPER:safe-resume -->
+<!-- PAPER:briefs -->
 </main>
 
 <div id="pop" role="dialog" aria-label="原文引用" hidden></div>
@@ -320,18 +377,43 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
 
 <script>
 (function () {
-  const PAPERS = ["overview", "agentboard", "deltabox", "llmservingsim", "agentservesim", "cost-of-reasoning", "crab"];
+  const PAPERS = ["overview", "agentboard", "deltabox", "llmservingsim", "agentservesim", "cost-of-reasoning", "crab", "agentsysbench", "sessions", "xperf", "murakkab", "agentix", "conserve", "cachescout", "simthesizer", "specbox", "yolofs", "safe-resume", "briefs"];
   const views = {};
-  PAPERS.forEach(p => { views[p] = document.getElementById("view-" + p); });
+  PAPERS.forEach(p => { const el = document.getElementById("view-" + p); if (el) views[p] = el; });
+  // tabs for papers whose page is not built yet are removed
+  document.querySelectorAll(".tab").forEach(t => { if (!views[t.dataset.view]) t.remove(); });
+  const groupOf = v => { const t = document.querySelector('.tab[data-view="' + v + '"]'); return t ? t.dataset.group : v; };
+  document.querySelectorAll(".gtab").forEach(g => {
+    const first = document.querySelector('.tab[data-group="' + g.dataset.group + '"]');
+    if (first) g.href = first.getAttribute("href");
+    else if (!views[g.dataset.group]) g.remove();
+  });
+  const sub = document.querySelector(".tabs");
 
   function route() {
-    const h = location.hash.replace("#", "");
-    const v = PAPERS.includes(h) ? h : PAPERS[0];
+    const h = decodeURIComponent(location.hash.replace("#", ""));
+    let v = views[h] ? h : null, target = null;
+    if (!v && h) {
+      target = document.getElementById(h);
+      const art = target && target.closest(".view");
+      if (art) v = art.dataset.paper;
+    }
+    if (!v) v = PAPERS[0];
     PAPERS.forEach(p => { if (views[p]) views[p].hidden = p !== v; });
+    const g = groupOf(v);
+    document.querySelector(".topbar").dataset.paper = v;
+    document.querySelectorAll(".gtab").forEach(t => {
+      if (t.dataset.group === g) t.setAttribute("aria-current", "true"); else t.removeAttribute("aria-current");
+    });
+    let shown = 0;
     document.querySelectorAll(".tab").forEach(t => {
+      const on = t.dataset.group === g; t.hidden = !on; shown += on;
       if (t.dataset.view === v) t.setAttribute("aria-current", "page"); else t.removeAttribute("aria-current");
     });
-    hidePop(); window.scrollTo(0, 0);
+    sub.hidden = shown === 0;
+    hidePop();
+    if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+    else window.scrollTo(0, 0);
   }
 
   // citation popover

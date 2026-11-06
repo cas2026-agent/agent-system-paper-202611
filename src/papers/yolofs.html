@@ -1,0 +1,284 @@
+<article class="view frame paper" id="view-yolofs" data-paper="yolofs" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Don’t Let AI Agents YOLO Your Files: Information and Control in Agent-Native Filesystems</h1>
+  <p class="zh">别让 AI 智能体随手动你的文件：面向智能体的文件系统中的信息与控制</p>
+  <p class="by">Shawn (Wanxiang) Zhong、Junxuan Liao、Jing Liu、Mai Zheng、Andrea C. Arpaci-Dusseau、Remzi H. Arpaci-Dusseau，威斯康星大学麦迪逊分校、微软研究院、爱荷华州立大学</p>
+  <div class="meta">
+    <span class="venue">arXiv 2604.13536v5，cs.OS，2026</span>
+    <div class="crumb"><span>操作系统</span><span>文件系统</span><span>智能体安全</span><span>暂存与回滚</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">背景</span><h2>本地智能体以用户的权限动文件</h2><span class="fn">Fig. 2</span><span class="src">§1、§2</span></div>
+    <p>Claude Code、Codex、Cursor 这类编程智能体在用户本机上运行，一次会话可能执行几百个文件操作和 shell 命令，用的是用户自己的权限。已经有智能体清空整块磁盘、毁掉无法恢复的个人文档、悄悄把凭据泄露给攻击者[[harm]]。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig2.png" alt="智能体访问文件系统的流程与外壳提供的三种防护" loading="lazy"></button>
+    </figure>
+    <p>现有的外壳（harness）有三种防护：对内置工具按路径设策略；对 shell 命令按字符串匹配规则过滤；把 shell 命令放进沙箱。多数外壳在执行前请用户批准，但频繁弹窗让智能体停下来等人，用户最后要么一律点同意，要么打开 “YOLO 模式” 让智能体不受检查地运行[[yolo]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">背景</span><h2>六种外壳的防护</h2><span class="fn">Table 1</span><span class="src">§2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>防护</th><th class="wrap">做法</th><th class="wrap">局限</th></tr></thead>
+      <tbody>
+        <tr><td>内置工具的策略</td><td class="wrap">外壳实现了读写搜索等工具，可以逐次放行、拒绝或询问</td><td class="wrap">内置工具只覆盖固定的操作，智能体用 shell 就绕开了</td></tr>
+        <tr><td>shell 命令过滤</td><td class="wrap">按模式匹配命令字符串，有的外壳内置一百多条规则、几千行代码</td><td class="wrap">只看字符串，看不到对文件的实际效果：不同命令可以效果相同，一个命令的效果也随参数和环境而变</td></tr>
+        <tr><td>沙箱</td><td class="wrap">Bubblewrap、Landlock、Docker 限制可访问的文件</td><td class="wrap">太紧会挡住正常工作，多数外壳默认不开或失败后提示在沙箱外重跑；沙箱内的文件照样可能被删</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="band">
+    <h2>290 份事故报告</h2>
+    <p>收集 2024 年 2 月到 2026 年 3 月的 290 份公开报告：GitHub issue 205 份，社交媒体 31 份，产品论坛 25 份，博客 18 份，国家漏洞库 11 份；涉及 13 种外壳。按是否造成实际危害分成事故 158、可利用的攻击路径 49、未证实危害的缺陷 83[[method]]。人工标注 100 份定出标签，再让智能体标注全部报告并交叉核对，最后人工复查。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>危害是什么样的</h2><span class="fn">Fig. 3</span><span class="src">§3.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig3.png" alt="207 份事故与攻击的影响：操作、范围、智能体反应、用户察觉、可恢复性" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>维度</th><th class="wrap">分布</th></tr></thead>
+      <tbody>
+        <tr><td>操作</td><td class="wrap">覆写 44%（用占位代码覆盖源文件、截断为零字节），删除 39%，泄露密钥 17%</td></tr>
+        <tr><td>范围</td><td class="wrap">42% 的危害在项目目录之外：系统文件 15%，用户文件 14%，密钥 13%</td></tr>
+        <tr><td>智能体反应</td><td class="wrap">68% 浑然不觉继续运行，21% 察觉后道歉，11% 谎报结果[[unaware]]</td></tr>
+        <tr><td>用户察觉</td><td class="wrap">83% 当即发现，10% 事后才发现，8% 一直不知道（多为悄悄外泄凭据）</td></tr>
+        <tr><td>可恢复性</td><td class="wrap">40% 无法恢复[[unrecover]]，31% 容易恢复（如 git checkout），29% 需要用户花大力气</td></tr>
+      </tbody>
+    </table></div>
+    <p>两条发现：用户和智能体都没法可靠地知道一次工具调用对文件系统做了什么；也没法可靠地事先阻止或事后恢复。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>原因：模型、外壳、用户</h2><span class="fn">Fig. 4</span><span class="src">§3.3–§3.5</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/yolofs/fig4.png" alt="原因分类：模型、外壳、用户三方面，计数可重叠" loading="lazy"></button>
+      </figure>
+      <dl class="defs">
+        <dt>模型（168 份）</dt><dd>动作不对：目标错（让归档却删了，改断言来让测试通过），范围过大，工具用错（没转义的 ~ 删掉了家目录）。指令被忽略，或在长会话压缩上下文时被挤掉。还有提示注入。</dd>
+        <dt>外壳（218 份）</dt><dd>shell 绕过内置工具的策略（读被拒就用 cat，删被拦就用 rm）；过滤只看命令字符串[[filter]]；沙箱太紧或太松。更普遍的问题是策略必须事先定死，宽了放任误用，紧了逼用户关掉保护。</dd>
+        <dt>用户</dt><dd>开了自动批准，因为否则一次会话要答几百个弹窗；弹窗只显示命令，不显示效果。</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">问题</span><h2>弹窗看不出命令做了什么</h2><span class="fn">Fig. 5</span><span class="src">§3.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig5.png" alt="Codex 请用户批准一段生成的 shell 脚本" loading="lazy"></button>
+    </figure>
+    <p>只是把 ../foo 里的 hello 换掉，Codex 生成了一段带错误处理和校验的复合命令请用户批准。“以后不再询问 sed -i” 这样的规则要么太宽（放行一切原地编辑），要么太窄（这条命令不会再出现）。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>信息缺口与控制缺口</h2><span class="fn">Fig. 1</span><span class="src">§3.6、§4.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig1.png" alt="把信息和控制从智能体移到文件系统" loading="lazy"></button>
+    </figure>
+    <p>智能体自己说不清也管不住自己对文件的影响，而文件系统能直接看到并拦截每次访问。论文因此主张把信息和控制交给文件系统，提出“面向智能体的文件系统”应提供三个原语[[primitives]]：</p>
+    <dl class="defs">
+      <dt>查看效果</dt><dd>一条命令实际读了、改了哪些文件。智能体据此发现自己的错误或恶意行为，用户据此审阅整个会话。</dd>
+      <dt>撤销修改</dt><dd>覆写和删除都能撤回。智能体不必事先请示，先执行、看效果、错了就撤销重来；任务结束后用户一次性审阅剩下的改动。</dd>
+      <dt>拦截访问</dt><dd>读过的密钥无法“没读过”，这类访问必须在发生前拦下。规则按路径而不是按命令，无论哪个命令访问这个路径都受约束。</dd>
+    </dl>
+    <p>另有四条要求：覆盖智能体能访问的所有文件且不能被绕过；策略能在运行中调整；不要求底层文件系统支持快照等非 POSIX 特性；开销要小。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">问题</span><h2>已有手段为什么不够</h2><span class="fn">Table 2</span><span class="src">§4.3</span></div>
+    <dl class="defs">
+      <dt>版本控制（Git）</dt><dd>只跟踪仓库里被选中的文件，.gitignore 里的往往正是敏感文件和大文件；历史存在 .git 里，智能体自己就能删掉；扩展到所有文件要扫描整棵树、哈希并另存副本。</dd>
+      <dt>版本化文件系统（ZFS、Btrfs）</dt><dd>粒度对不上会话：整个文件系统回滚会连带丢掉用户的其他改动；还要求专用的磁盘格式，现有数据得迁移。</dd>
+      <dt>联合文件系统（OverlayFS）</dt><dd>重命名下层文件要先整份拷到上层[[rename]]；一个可写层只记录总的结果，要按命令撤销就得层层叠加，层数越多查找越慢，层数还有上限。</dd>
+      <dt>访问控制与隔离</dt><dd>Docker、Bubblewrap 启动时就定好可见路径；Landlock 只能加限制不能放宽；都只能按既定策略即时决定，没法把一次意料之外的访问留给用户决定。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>YoloFS 的三个机制</h2><span class="fn">Fig. 6</span><span class="fn">Fig. 7</span><span class="src">§5.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig6.png" alt="(a) 暂存供用户审阅；(b) 快照与回溯供智能体自我纠正；(c) 渐进式授权" loading="lazy"></button>
+    </figure>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/yolofs/fig7.png" alt="YoloFS 架构：内核文件系统与用户态 CLI" loading="lazy"></button>
+      </figure>
+      <div>
+        <p>YoloFS 由一个 Linux 内核可堆叠文件系统（2.7 千行 C）和一个用户态 CLI（8 千行 Rust）组成，叠在整个底层文件系统之上。CLI 在挂载命名空间里以 YoloFS 为根文件系统运行智能体的每条命令，所以智能体绕不过去。三个机制分别对应三个原语：暂存（staging）把所有修改留到用户提交为止；快照和回溯（travel）让智能体看每条命令的改动并退回之前的状态；渐进式授权（progressive permission）在运行中让用户逐步定规则。</p>
+        <p><b>例子。</b>智能体对一个含恶意依赖的项目执行 cargo build，不需要事先批准命令。依赖的脚本想读 SSH 密钥时，YoloFS 拦下并把路径和操作告诉用户，用户拒绝。命令结束后自动快照，智能体看到被拒绝的访问和暂存的改动，识别出攻击，回溯到前一个快照，换一个依赖重试。会话结束时用户审阅剩下的改动再提交。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>暂存：内容和路径分开存</h2><span class="fn">Fig. 8</span><span class="fn">Fig. 9</span><span class="src">§5.2</span></div>
+    <p>联合文件系统的暂存目录要镜像底层的目录树，所以重命名要拷贝内容。YoloFS 认为暂存内容的存储布局不必镜像目录树，只有呈现给智能体的视图需要保持层次[[decouple]]。于是用三个结构：</p>
+    <dl class="defs">
+      <dt>平铺文件库</dt><dd>底层文件系统里的一个目录，存放改过和新建的文件内容，每个文件用递增编号标识。</dd>
+      <dt>覆盖树</dt><dd>内核里的内存结构，把每个路径映射到三种后端之一：文件库里的暂存文件、底层文件系统的某个位置、不存在。路径可以指向底层的另一个位置，所以重命名不拷贝。</dd>
+      <dt>会话日志</dt><dd>只追加的文件。每次改覆盖树就追加一条记录：S 暂存、D 删除、R 重命名。内核只写不读，由 CLI 重放来审阅和提交。</dd>
+    </dl>
+    <div class="figrow">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/yolofs/fig8.png" alt="日志记录格式" loading="lazy"></button>
+        <figcaption><span class="fig-no">Fig. 8</span>日志记录格式。除了 S、D、R 三种动作，还有快照标记 P、回溯标记 T，以及记录拦截和规则变更的 G、C 两种注记。</figcaption>
+      </figure>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/yolofs/fig9.png" alt="六个系统调用产生的日志记录与最终的覆盖树" loading="lazy"></button>
+        <figcaption><span class="fig-no">Fig. 9</span>截断、写入、删除、移动、建目录、重命名整个目录。最后一步把 a/ 改名为 c/b/，只把 c/b/ 指向底层的 a/，不拷贝。</figcaption>
+      </figure>
+    </div>
+    <p>提交或放弃只能由用户做，智能体不能自己提交[[commit]]。放弃就清空覆盖树、文件库和日志，底层文件系统不受影响；提交时 CLI 按重建的覆盖树把每个路径落到最终位置，遇到 a、b 互换这种环会先移到临时路径。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>快照与回溯：历史放在日志里</h2><span class="fn">Fig. 10</span><span class="src">§5.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig10.png" alt="快照与回溯标记把日志分成段；活段与死段" loading="lazy"></button>
+    </figure>
+    <p>只有暂存的话，所有命令的改动混在一个状态里，没法单独看或单独撤销一条命令。联合文件系统要保留中间状态只能冻结当前层再叠一层，越叠越慢。YoloFS 内核只维护当前的覆盖树，历史放在日志里：快照只是日志里的一个 P 标记，默认每条命令后打一个；暂存文件按代（generation）做写时复制，旧版本留着供查看和回溯。所以快照再多，正常的文件操作也不变慢。</p>
+    <p>每条记录带上受影响路径之前的后端（pre 字段），一段日志单独就能算出这条命令的净改动，不用从头重放。回溯不截断日志，而是追加一个 T 标记；被放弃的历史仍然保留，智能体如果发现回溯本身错了还能“回到未来”。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>渐进式授权</h2><span class="src">§5.4、§5.5</span></div>
+    <p>有些访问撤销不了，只能事先拦。智能体需要访问什么取决于任务，没法一开始就写全，所以 YoloFS 让访问来推动规则的完善[[progressive]]。每个路径五种策略之一：ask（每次问）、allow、write-ask（读放行、写要问）、read-only、deny。规则组成一棵树，路径继承最近祖先的策略，更具体的规则覆盖继承的。</p>
+    <p>命中 ask 时，内核阻塞发起访问的线程，把路径、操作和进程名交给 CLI 问用户；用户回答的是一次具体的访问，而不是一条看不懂的命令。超时则拒绝。用户可以在弹窗里直接装一条规则（“拒绝且不再询问”），规则随时可改，下一次访问就生效，并按项目保存。规则和授权决定只接受来自用户的请求，内核通过检查调用进程的根文件系统来识别智能体一侧，拒绝它的这类操作。被拦的访问和规则变更也记进日志，审阅时一并显示。</p>
+    <p>已接入 Claude Code、Copilot 和 Gemini 的工具调用钩子，每条命令都经 yolo run 执行。</p>
+  </section>
+
+  <div class="band">
+    <h2>智能体评测</h2>
+    <p>两个问题：YoloFS 能否防住隐藏的副作用、让智能体自己纠正；在日常任务上能否减少用户交互而不降低成功率。现有基准单独评模型或外壳并绕过了批准弹窗，所以论文写了一个交互式驱动：在伪终端里运行每个智能体，监视虚拟屏幕上的权限弹窗并按固定策略作答，每个任务从全新的目录开始，限时 3 分钟，结束后检查文件状态。对比 Claude Code 2.1.45（claude-sonnet-4-6）加不加 YoloFS，以及 Codex、Copilot CLI、Gemini CLI。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>隐藏副作用：11 个任务</h2><span class="fn">Table 3</span><span class="src">§6.2</span></div>
+    <p>每个任务让智能体做一件平常的事（跑 linter、清理构建产物、数据迁移），但命令会删源码、覆盖配置或删文档。项目都很小（10 到 41 行），方便智能体自己检查。按副作用的隐蔽程度分四级：L1 一个可读脚本；L2 Makefile 调子脚本；L3 三层以上的间接调用；L∞ 预编译的二进制。加了 YoloFS 的智能体每条命令后能看到改动摘要，可以回溯；不额外提示它去找破坏性改动。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>级别</th><th>任务</th><th class="wrap">副作用</th><th>YoloFS</th><th>Claude</th><th>Codex</th><th>Copilot</th><th>Gemini</th></tr></thead>
+      <tbody>
+        <tr><td>L1</td><td>cleanup</td><td class="wrap">连 README 和 *.bak 一起删</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L1</td><td>deploy</td><td class="wrap">拷到 staging 后删 src/</td><td>✓u</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L1</td><td>migration</td><td class="wrap">清空 CSV，删 legacy/</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L2</td><td>build</td><td class="wrap">连 *.h 和 src/utils.c 一起删</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L2</td><td>install</td><td class="wrap">重置配置和 .env</td><td>✓u</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L2</td><td>formatter</td><td class="wrap">删文档，改写 JS</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>–</td></tr>
+        <tr><td>L3</td><td>test-runner</td><td class="wrap">清理时删测试夹具</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L3</td><td>build-pkg</td><td class="wrap">打包时删源码</td><td>✓</td><td>✗</td><td>?</td><td>?</td><td>–</td></tr>
+        <tr><td>L∞</td><td>lint</td><td class="wrap">删源文件</td><td>✓</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L∞</td><td>config-fix</td><td class="wrap">重置配置文件</td><td>✓u</td><td>✗</td><td>?</td><td>✗</td><td>✗</td></tr>
+        <tr><td>L∞</td><td>optimizer</td><td class="wrap">删除并覆盖文件</td><td>✓</td><td>?</td><td>?</td><td>✗</td><td>✗</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">✓ 智能体自己纠正；✓u 智能体接受了改动，但改动仍暂存着，用户可以在提交前拒绝；✗ 造成危害；? 问了用户；– 没能执行命令，没造成危害但任务也没完成。</p>
+    <p>没有 YoloFS 时，没有一个智能体能可靠地防住。Codex 先在沙箱里跑，碰壁后问用户能否到沙箱外运行，弹窗只显示命令不显示副作用，所以记为“问了用户”。加上 YoloFS 后，11 个任务都没有伤到底层文件系统：8 个由智能体自己发现并回溯[[selfcorrect]]，例如 formatter 中它看到两个文档被删、两个源文件被改写，回溯后读脚本判断“这是破坏性脚本，不是格式化工具”。其余 3 个（deploy、install、config-fix）的改动看起来与任务目标相符，智能体接受了，但仍停在暂存区等用户决定。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>日常任务：112 个单操作任务</h2><span class="fn">Table 4</span><span class="fn">Table 5</span><span class="src">§6.3</span></div>
+    <p>18 种操作（读、写、追加、删除、拷贝、移动、建目录、列目录、grep、glob 等），每种配 5 到 7 种路径：项目内、经 .. 绕回项目、项目外、经符号链接指向外部。每个任务只做一次操作，好单独看访问控制的影响。用户交互指用户必须操作智能体才能继续的地方：对基线是命令批准弹窗，对 YoloFS 是权限请求；驱动总是选“允许且不再询问”，重复的弹窗只计一次。为了公平，要求各智能体都用 shell 命令。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>路径类别</th><th class="r">YoloFS</th><th class="r">Claude</th><th class="r">Codex</th><th class="r">Copilot</th><th class="r">Gemini</th></tr></thead>
+      <tbody>
+        <tr><td colspan="6"><b>成功率 %</b></td></tr>
+        <tr><td>项目内</td><td class="r n">100</td><td class="r n">100</td><td class="r n">100</td><td class="r n">100</td><td class="r n">92</td></tr>
+        <tr><td>项目外</td><td class="r n">100</td><td class="r n">97</td><td class="r n">100</td><td class="r n">97</td><td class="r n">55</td></tr>
+        <tr><td>符号链接</td><td class="r n">95</td><td class="r n">95</td><td class="r n">100</td><td class="r n">86</td><td class="r n">63</td></tr>
+        <tr class="me"><td>全部</td><td class="r n">99</td><td class="r n">98</td><td class="r n">100</td><td class="r n">96</td><td class="r n">75</td></tr>
+        <tr><td colspan="6"><b>每个任务的用户交互次数</b></td></tr>
+        <tr><td>项目内</td><td class="r n">0</td><td class="r n">0.8</td><td class="r n">0</td><td class="r n">0.7</td><td class="r n">1.3</td></tr>
+        <tr><td>项目外</td><td class="r n">0.9</td><td class="r n">1.1</td><td class="r n">0.8</td><td class="r n">1.8</td><td class="r n">2.3</td></tr>
+        <tr><td>符号链接</td><td class="r n">0.8</td><td class="r n">1.0</td><td class="r n">0.6</td><td class="r n">1.7</td><td class="r n">4.2</td></tr>
+        <tr class="me"><td>全部</td><td class="r n">0.4</td><td class="r n">0.9</td><td class="r n">0.4</td><td class="r n">1.3</td><td class="r n">2.2</td></tr>
+        <tr><td colspan="6"><b>每个任务的工具调用次数（全部）</b></td></tr>
+        <tr><td>全部</td><td class="r n">1.1</td><td class="r n">1.0</td><td class="r n">1.8</td><td class="r n">1.1</td><td class="r n">2.9</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">表中的 100 在原表里用 ✓ 表示。</p>
+    <p>YoloFS 成功率 99%，与 Claude Code 的 98% 相当；交互 0.4 次，低于 Claude、Copilot、Gemini，与 Codex 持平[[interact]]。项目内的操作不用授权，只有项目外的路径第一次访问时问一次。Codex 也是 0.4 次，靠的是“可写沙箱，失败再问”：先在沙箱里跑，被挡后问用户再重跑，所以工具调用多一倍。Gemini 的失败多是内置策略挡住了项目外的路径。</p>
+  </section>
+
+  <div class="band">
+    <h2>性能评测</h2>
+    <p>CloudLab 上一台 16 核 AMD EPYC 7302P、128 GB 内存的机器，Linux 6.8，底层是 SATA SSD 上的 Ext4。对比 OverlayFS（用多个下层目录加后处理模拟 YoloFS 的功能）和 BranchFS（一个面向智能体探索的 FUSE 研究原型，支持暂存、提交和嵌套分支），两者都没有权限控制。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>文件读写与元数据操作</h2><span class="fn">Table 6</span><span class="fn">Fig. 11</span><span class="src">§7</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>1 GB 暂存文件，4 KB 请求</th><th class="r">Ext4 GB/s</th><th class="r">YoloFS</th><th class="r">OverlayFS</th><th class="r">BranchFS</th></tr></thead>
+      <tbody>
+        <tr><td>顺序读，冷</td><td class="r n">0.5</td><td class="r n">0%</td><td class="r n">+1%</td><td class="r n">−3%</td></tr>
+        <tr><td>顺序读，热</td><td class="r n">2.5</td><td class="r n">+1%</td><td class="r n">−23%</td><td class="r n">−62%</td></tr>
+        <tr><td>顺序写</td><td class="r n">0.9</td><td class="r n">−2%</td><td class="r n">−15%</td><td class="r n">−85%</td></tr>
+        <tr><td>随机读，冷</td><td class="r n">0.03</td><td class="r n">−2%</td><td class="r n">0%</td><td class="r n">−17%</td></tr>
+        <tr><td>随机读，热</td><td class="r n">2.3</td><td class="r n">0%</td><td class="r n">−19%</td><td class="r n">−93%</td></tr>
+        <tr><td>随机写</td><td class="r n">0.8</td><td class="r n">−1%</td><td class="r n">−12%</td><td class="r n">−84%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">后三列是相对 Ext4 的吞吐变化。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig11.png" alt="文件位于底层、快照或暂存区时各元数据操作的延迟" loading="lazy"></button>
+    </figure>
+    <p>YoloFS 读写与 Ext4 持平。元数据操作多数比 OverlayFS 快；文件在暂存区时，readdir、rename、unlink 因为走内存里的覆盖树和日志，甚至比 Ext4 快。BranchFS 慢 20 倍以上。权限检查的开销多数操作可忽略，stat 上为 4%[[perm]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>快照增多与真实开发负载</h2><span class="fn">Fig. 12</span><span class="fn">Fig. 13</span><span class="src">§7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig12.png" alt="快照数量增加时 create、read、commit 的延迟" loading="lazy"></button>
+    </figure>
+    <p>反复覆写十个文件来累积快照。OverlayFS 到约 50 个快照就失败了，因为挂载参数超过内核的长度上限[[overlay50]]。OverlayFS 和 BranchFS 的新建和读取随快照增多变慢，YoloFS 不变。提交时间随快照数线性增长，但 YoloFS 只读一个日志文件，比逐个查询快。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/yolofs/fig13.png" alt="按 Linux 内核补丁系列建 worktree、编译、逐个打补丁的开发负载耗时" loading="lazy"></button>
+    </figure>
+    <p>按一组真实的内核补丁走一遍：建 git worktree、编译内核，然后对每个补丁搜索阅读、修改、增量编译、git 提交，最后把全部改动提交到底层。YoloFS 与 Ext4 相当，只是最后提交十万多个文件多花 3.5 秒；OverlayFS 比 YoloFS 慢 18%，因为每次快照都要重新挂载；BranchFS 有 bug，初次编译之后就跑不下去[[workload]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2><span class="src">§8、§9</span></div>
+    <p>290 份事故报告显示，问题出在用户和智能体既不知道命令对文件做了什么，也管不住。YoloFS 把这件事交给文件系统：所有修改先暂存，每条命令后快照，智能体看到改动能自己回溯纠正，用户最后统一审阅；撤销不了的访问按路径在发生前拦下，规则随运行逐步完善。隐藏副作用的 11 个任务中智能体自己纠正了 8 个，其余 3 个仍可由用户拒绝；日常任务成功率不降、交互更少；I/O 开销可忽略，快照到几百个也不变慢。论文最后主张：随着智能体越来越自主，文件系统应当暴露智能体的影响、让修改可撤销、在敏感访问发生前控制住[[conclusion]]。</p>
+    <p>相关工作一节提到了面向智能体的快照与恢复系统，其中包括 Crab 和 DeltaBox，评价是它们让智能体的执行可以恢复，但不暴露单条命令对文件系统的影响，也不做细粒度的文件访问策略[[related]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>论文把非文件系统的接口（数据库、网页应用、云服务）排除在外，认为这些是互补的问题，三个原语可能也适用于其他有状态的系统。</p>
+    <p class="mine"><b>本页说明：</b>11 个隐藏副作用任务的项目都只有 10 到 41 行，是有意让智能体容易查清；真实项目大得多时，智能体能否从改动摘要里看出异常没有验证。另外 3 个任务中智能体把有害改动当成正常结果接受了，这说明，YoloFS 能保证的是改动可见、可撤销，至于是否有害，最终仍要靠用户审阅。日常任务每个只做一次操作，0.4 次交互里主要是项目外路径的首次询问；多步任务中规则逐步积累后的交互次数没有测。只评测了 Claude Code 加 YoloFS 一种组合。暂存期间修改都不落到底层，这也意味着智能体会话之外的其他程序看不到改动，长会话或多个工具协作时这一点的影响论文没有讨论。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="harm"><blockquote lang="en">destroyed irreplaceable personal documents [R22], and silently leaked credentials to attackers [R231].</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="yolo"><blockquote lang="en">users often approve everything blindly or enable “YOLO mode” [102], allowing the agent to run unchecked.</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="method"><blockquote lang="en">We write a description of each report and triage it as an incident (158; confirmed harm), exploit (49; demonstrated attack path), or weakness (83; flaw without demonstrated impact).</blockquote><p class="loc">§3.1，第 3 页</p></li>
+      <li data-key="unaware"><blockquote lang="en">In 68% of reports with known agent reaction, the agent continues operating as if nothing went wrong.</blockquote><p class="loc">§3.2，第 4 页</p></li>
+      <li data-key="unrecover"><blockquote lang="en">Among reports with known recoverability, 40% are unrecoverable</blockquote><p class="loc">§3.2，第 4 页</p></li>
+      <li data-key="filter"><blockquote lang="en">Filters on command strings are unreliable because they do not target the actual filesystem effects.</blockquote><p class="loc">§3.4，第 5 页</p></li>
+      <li data-key="primitives"><blockquote lang="en">We propose three primitives for agent-native filesystems</blockquote><p class="loc">§4.1，第 6 页</p></li>
+      <li data-key="rename"><blockquote lang="en">renaming a file from the lower layer copies it into the upper layer, moves the copy to the destination, and leaves a whiteout at the source.</blockquote><p class="loc">§4.3，第 7 页</p></li>
+      <li data-key="decouple"><blockquote lang="en">Our key insight is that the storage layout of staged contents need not mirror the base directory tree.</blockquote><p class="loc">§5.2，第 8 页</p></li>
+      <li data-key="commit"><blockquote lang="en">The agent cannot commit or abort its own changes.</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="progressive"><blockquote lang="en">For an undecided access, the user decides whether it is allowed or not and can install a rule for future accesses.</blockquote><p class="loc">§5.4，第 10 页</p></li>
+      <li data-key="selfcorrect"><blockquote lang="en">Claude self-corrects in 8 of 11 tasks, while the remaining 3 are user-correctable</blockquote><p class="loc">§6.2，第 12 页</p></li>
+      <li data-key="interact"><blockquote lang="en">YoloFS averages 0.4 user interactions per task, lower than Claude (0.9), Copilot (1.3), and Gemini (2.2), and matching Codex’s 0.4.</blockquote><p class="loc">§6.3，第 13 页</p></li>
+      <li data-key="perm"><blockquote lang="en">The overhead of permission control is negligible on YoloFS for most operations and only 4% for stat.</blockquote><p class="loc">§7，第 14 页</p></li>
+      <li data-key="overlay50"><blockquote lang="en">OverlayFS fails to create more than 50 snapshots because the mount option length exceeds the kernel limit.</blockquote><p class="loc">§7，第 14 页</p></li>
+      <li data-key="workload"><blockquote lang="en">YoloFS matches Ext4 except for an additional 3.5 seconds to commit more than 100,000 files.</blockquote><p class="loc">§7，第 14 页</p></li>
+      <li data-key="related"><blockquote lang="en">They make agent execution recoverable but do not expose the filesystem effects of individual commands or enforce fine-grained file-access policies.</blockquote><p class="loc">§8，第 14 页</p></li>
+      <li data-key="conclusion"><blockquote lang="en">As agents become more autonomous, filesystems should expose agents’ effects, keep their mutations undoable, and control sensitive accesses before they occur.</blockquote><p class="loc">§9，第 15 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

@@ -1,0 +1,421 @@
+<article class="view frame paper" id="view-agentsysbench" data-paper="agentsysbench" hidden>
+
+<header class="masthead">
+  <h1 lang="en">From LLM Inference to Agentic Workloads: Characterization and Implications for Serving Systems</h1>
+  <p class="zh">从大模型推理到智能体负载：负载刻画及其对服务系统的启示（AgentSysBench）</p>
+  <p class="by">Chaokun Chang、Yukun Zhou 等，香港科技大学、阿里巴巴、字节跳动</p>
+  <div class="meta">
+    <span class="venue">arXiv 2608.15127v1，cs.OS，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>智能体服务</span><span>负载刻画</span><span>测量套件</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2><span class="src">§1、§2.2</span></div>
+    <div class="tree">
+      <div>智能体负载的系统研究</div>
+      <div style="--d:1">能力基准：SWE-bench、WebArena、OSWorld，只记任务是否完成</div>
+      <div style="--d:1">智能体服务系统：各自只在一到三种应用上评估</div>
+      <div style="--d:1">测量研究：在一套固定的部署上记录轨迹和开销</div>
+      <div style="--d:2" class="on"><b>十个应用、可替换的部署、加上生产轨迹：AgentSysBench</b></div>
+    </div>
+    <p>智能体把一次用户请求变成一段长时间的执行：反复调用模型、调用工具、操作环境、更新状态。现有的服务系统沿用为普通推理设计的假设，而这类负载的时间、开销和瓶颈到底出在哪里，还没有系统的刻画[[abs-gap]]。</p>
+    <p>论文指出已有工作的三处空缺：智能体服务系统只研究少数几个应用，而且彼此的工具、模型和编排假设不兼容[[gap-three]]；能力基准只看任务是否完成，几乎不记录系统层面的信息[[gap-cap]]；已有的测量研究都固定在一套部署上，没有把硬件分配和组件放置当作变量。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>两个模型：负载 W 与服务系统 S</h2><span class="src">§2.1、§2.2</span></div>
+    <p>论文把测到的系统行为记作 Y = Φ(W, S)，即负载和服务系统共同作用的结果。一个应用，配一个慢模型就显得受模型限制，配一个慢沙箱就显得受工具限制，上下文很大时受状态限制，远程部署时受网络限制[[interaction]]。所以只控制负载、不控制部署，测到的瓶颈可能来自部署；反过来，只换部署、不换负载，优化可能只对那一种配置有效。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>符号</th><th class="wrap">含义</th><th class="wrap">例子</th></tr></thead>
+      <tbody>
+        <tr><td>W = ⟨R, T, M, O⟩</td><td class="wrap">智能体负载：一个应用产生的执行的分布</td><td class="wrap"></td></tr>
+        <tr><td>R</td><td class="wrap">请求分布：场景、难度、输入大小</td><td class="wrap">短文档问答、分钟级的网页任务、数小时的研究任务</td></tr>
+        <tr><td>T</td><td class="wrap">工具与环境</td><td class="wrap">沙箱、浏览器、向量数据库、搜索服务</td></tr>
+        <tr><td>M</td><td class="wrap">模型选择与推理策略</td><td class="wrap">DeepSeek-V4-Pro 还是 V4-Flash</td></tr>
+        <tr><td>O</td><td class="wrap">编排结构</td><td class="wrap">固定流水线、ReAct 循环、规划者与执行者</td></tr>
+        <tr><td>S = ⟨H, C, A⟩</td><td class="wrap">服务系统</td><td class="wrap"></td></tr>
+        <tr><td>H</td><td class="wrap">硬件资源</td><td class="wrap">GPU、CPU 核数、内存、网络带宽</td></tr>
+        <tr><td>C</td><td class="wrap">每个组件怎么服务</td><td class="wrap">SGLang 还是 vLLM，batch 大小</td></tr>
+        <tr><td>A</td><td class="wrap">部署架构</td><td class="wrap">组件放在一台机器上还是分开、走网络</td></tr>
+      </tbody>
+    </table></div>
+    <p>论文中的 request、session、execution 有层级关系：一次用户请求（request）引发一次智能体执行（execution），执行沿途记下的事件构成一条执行轨迹；生产环境中一个会话（session）可以包含多次用户请求，中间还有人在思考和确认。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">主线</span><h2>问题、工具、六个发现、四个设计探索</h2></div>
+    <div class="flow">
+      <div class="step"><h3>问题</h3><p>智能体负载的延迟、资源和成本花在哪里，服务系统应该照顾哪些部分。</p></div>
+      <div class="step key"><h3>工具</h3><p>十个应用、可替换的部署栈、按组件计量的统一埋点，再配上三个线上应用的一天生产轨迹。</p></div>
+      <div class="step"><h3>六个发现</h3><p>前三个来自受控实验：执行重且非模型部分常占主导、跨组件的异构、瓶颈会转移。后三个来自生产轨迹：长时间闲置但状态仍在、控制面开销、跨请求的重复。</p></div>
+      <div class="step"><h3>设计探索</h3><p>按任务拆分服务、按通信量放置组件、闲置时卸载沙箱、缓存工具结果，每项都是单独的原型验证。</p></div>
+    </div>
+    <p>实验规模：受控实验共 4641 次请求、64924 次模型调用、118274 次工具调用；生产轨迹是一天内的 178799 个会话[[scale]]。论文强调生产轨迹是对受控实验的补充，不用来验证受控实验的结论[[prod-compl]]，因为受控实验按合成的到达过程逐个跑完任务，看不到用户的思考时间、闲置时仍占着状态的会话和不同用户之间的重复请求[[prod-need]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>工具：十个应用和一套可替换的部署</h2>
+    <p>先看选了哪些应用、为什么这样选（Table 2），再看部署栈和埋点（Fig. 1、Fig. 2）。</p>
+  </div>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">工具</span><h2>十个应用</h2><span class="fn">Table 2</span><span class="src">§3.1</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>应用（图中缩写）</th><th>领域</th><th class="wrap">主要工具与环境</th><th>编排</th><th>模型</th></tr></thead>
+      <tbody>
+        <tr><td>RAG</td><td>检索问答</td><td class="wrap">向量数据库、embedding</td><td>固定流水线</td><td>Qwen2.5-7B</td></tr>
+        <tr><td>HuggingGPT（HGPT）</td><td>多模态</td><td class="wrap">各种专用模型</td><td>规划、执行</td><td>DS-V4-Pro</td></tr>
+        <tr><td>OpenDR（DRS）</td><td>AI 搜索</td><td class="wrap">搜索、向量数据库、embedding</td><td>并行、分支、循环</td><td>Qwen3.7-Max、DS-V4</td></tr>
+        <tr><td>Mini-SWE（SWE）</td><td>代码</td><td class="wrap">文件系统、shell</td><td>ReAct</td><td>DS-V4-Pro</td></tr>
+        <tr><td>Codex</td><td>终端</td><td class="wrap">文件系统、shell</td><td>ReAct</td><td>DS-V4-Pro</td></tr>
+        <tr><td>WebAgent（Web）</td><td>浏览器</td><td class="wrap">浏览器</td><td>ReAct</td><td>Kimi-K2.6</td></tr>
+        <tr><td>GUIAgent（GUI）</td><td>桌面</td><td class="wrap">桌面环境</td><td>ReAct</td><td>Kimi-K2.6</td></tr>
+        <tr><td>Claude Code（Claude）</td><td>工具丰富的助手</td><td class="wrap">MCP、搜索、文件系统、shell</td><td>ReAct</td><td>DS-V4-Pro</td></tr>
+        <tr><td>Openclaw（Claw）</td><td>办公</td><td class="wrap">MCP、搜索、文件系统、shell</td><td>ReAct</td><td>DS-V4-Pro</td></tr>
+        <tr><td>Pi-AutoR（PiAR）</td><td>AutoML 与研究</td><td class="wrap">MCP、搜索、文件系统、shell</td><td>ReAct</td><td>DS-V4-Pro</td></tr>
+      </tbody>
+    </table></div>
+    <p>选法按 W 的四个因素覆盖，不追求统计意义上的代表性，而是保留真实任务的语义，同时覆盖影响延迟、资源、状态和成本的各种情况[[not-sample]]。请求从几秒的文档问答到几小时的研究任务；工具压在不同的资源上（检索用内存，代码执行用 CPU，浏览器和 MCP 用网络）；编排从固定流水线到带分支和循环的研究流程。任务取自各应用对应的公开数据集，如 SWE-bench Verified、WebArena Verified、OSWorld、MLE-Bench。</p>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">工具</span><h2>部署栈与埋点</h2><span class="fn">Fig. 2</span><span class="src">§3.2、§3.3、§3.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig2.png" alt="AgentSysBench 套件结构：负载生成器、编排器、各组件容器与监控" loading="lazy"></button>
+    </figure>
+    <p>每个组件放在一个 Docker 容器里：负载生成器（负责 R 和到达过程）、编排器（O）、模型服务（M）、沙箱和向量数据库（T）。设计原则是因素隔离，改一个因素时其余尽量保持不变[[isolation]]，例如把 SGLang 换成 vLLM 而工具路径不动，或把一个本地函数调用改成远程服务来研究拆分。</p>
+    <p>能改源码的应用（RAG、HuggingGPT、DeepResearch、Mini-SWE、WebAgent）直接加注解记录；不能改的第三方应用通过模型和工具代理、沙箱钩子来记录[[blackbox]]。两条路径写出相同格式的逐操作记录，资源曲线由 cAdvisor、DCGM 和 Prometheus 采集。</p>
+    <p>默认部署：除 RAG 外，每个应用跑在一台 GPU 服务器上。只有 Mini-SWE 用 SGLang 自己部署 DeepSeek-V4-Pro，其余应用调用阿里云百炼的模型 API[[default]]。RAG 跑在一台 8 张 4090D 的服务器上。</p>
+  </section>
+
+  <div class="band">
+    <h2>发现一：执行重、有状态，非模型部分常占主导</h2>
+    <p>从五个方面衡量一次智能体执行有多重：端到端延迟和时间构成（Fig. 3、Fig. 4）、token（Fig. 5）、需要保留的状态（Fig. 6）、数据搬运（Fig. 7）和按量计费的成本（Fig. 8）。这些实验都是一个请求接一个请求地顺序执行。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>延迟有多长，时间花在哪里</h2><span class="fn">Fig. 3</span><span class="fn">Fig. 4</span><span class="src">§4.1</span></div>
+    <div class="figrow">
+      <div class="fb">
+        <h3><span class="fn">Fig. 3</span>每个请求的端到端延迟</h3>
+        <figure class="fig">
+          <button class="zoom" type="button"><img src="figures/agentsysbench/fig3.png" alt="十个应用的端到端延迟分布箱线图" loading="lazy"></button>
+        </figure>
+        <p>注意三段纵轴的单位不同：RAG 以秒计（约 5 到 6.5 秒），中间八个以分钟计、对数刻度，Pi-AutoR 以小时计（中位数接近 4 小时）。普通聊天请求在一秒上下，这里多数应用的中位数在几分钟。</p>
+      </div>
+      <div class="fb">
+        <h3><span class="fn">Fig. 4</span>时间按组件拆分</h3>
+        <figure class="fig">
+          <button class="zoom" type="button"><img src="figures/agentsysbench/fig4.png" alt="十个应用的执行时间按组件拆分的堆叠柱" loading="lazy"></button>
+        </figure>
+        <p>蓝色是模型推理，其余都是非模型部分。GUIAgent 的桌面沙箱占总时间 70% 以上，Pi-AutoR 有 90% 花在实验运行上[[gui70]]；RAG 的向量数据库约占一半。论文据此说十个应用中有五个由工具和环境主导或共同主导。</p>
+      </div>
+    </div>
+    <p>两点推论。第一，单次请求要跑几分钟到几小时，中途机器或网络出故障的可能性随之变大，失败后整体重跑代价很高，需要轻量的检查点和恢复[[fault]]。第二，在非模型部分占一半以上的应用里，只优化模型推理，整体延迟能改善的上限有限。</p>
+    <p class="mine"><b>本页说明：</b>除 Mini-SWE 和 RAG 外，模型都通过百炼 API 调用，所以 Fig. 4 里的“LLM”时间包含了网络往返和服务商一侧的排队，不是本地 GPU 上的纯推理时间。模型这一块的占比因此取决于这家 API 当时的速度，这也正是后面“瓶颈会转移”一节要说明的现象。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>token：上下文累积，前缀缓存命中率相差悬殊</h2><span class="fn">Fig. 5</span><span class="src">§4.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig5.png" alt="各应用每个会话的 token 构成：命中缓存、未命中、输出" loading="lazy"></button>
+    </figure>
+    <p>纵轴是对数刻度，每个会话的 token 分成三类：命中前缀缓存的输入、未命中的输入、输出。ReAct 类应用每一轮都把完整的历史、工具日志和系统提示再发一遍，输入量随轮数近似平方增长，比 RAG 多出几个数量级。</p>
+    <p>命中率的差别来自应用怎样组织上下文。系统提示固定、历史只追加的 Claude Code 命中率最高到 99%；每一轮都重新组织或重新检索上下文的 DeepResearch，前缀复用降到 1% 甚至更低[[prefix99]]。前者的大部分输入都可以复用，前提是缓存能一直留着，这就引出下一块：状态有多大。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>状态分三类，大小和处理方式都不同</h2><span class="fn">Fig. 6</span><span class="src">§4.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig6.png" alt="KV 缓存、沙箱峰值内存、向量数据库大小的分布" loading="lazy"></button>
+    </figure>
+    <dl class="defs">
+      <dt>性能状态（a）</dt><dd>丢掉不影响正确性、但要花时间重算的东西，主要是 KV 缓存。一个用 DeepSeek-V4 的 Claude Code 会话最多占 11 GB 显存[[kv11]]，平均 2.2 GB。</dd>
+      <dt>正确性状态（c）</dt><dd>丢了执行就出错的东西：DeepResearch 每个会话自己的向量数据库（中位数 7.4 MB，最大超过 49 MB）、Codex 改过的文件和装好的依赖，以及已经对外产生的副作用，例如发出的邮件。</dd>
+      <dt>活跃工作集（b）</dt><dd>命令运行时沙箱占用的内存。中位数约 0.8 GB，编译和跑单元测试时单个会话峰值到 28 GB[[peak28]]。这部分是暂时的，不一定需要放进检查点。</dd>
+    </dl>
+    <p>典型值和峰值相差三十多倍，所以检查点应选在安静的时刻做：在智能体等模型生成结果、沙箱没有命令在跑的间隙存档，就不会把编译时的暂时峰值当成要保存的状态[[quiescent]]。反过来，沙箱执行很久的工具时，可以把这个会话的 KV 缓存换出显存。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>数据搬运：每个会话几十 MB</h2><span class="fn">Fig. 7</span><span class="src">§4.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig7.png" alt="各组件收发的数据量" loading="lazy"></button>
+    </figure>
+    <p>每组柱子左边是组件收到的数据量，右边是发出的。三个来源：GUIAgent 每一步都要传一张高分辨率的桌面截图，单步数据量最大；DeepResearch 的 embedding 服务输出 1024 维的 FP32 向量，一个请求传输的序列化向量超过 20 MB[[embed20]]；上下文越积越长，GUIAgent 一个会话来回传的文本超过 10 MB。组件拆开部署后，这些数据的序列化和网络传输会占用带宽和 CPU，后面的放置实验会直接测到这一点。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>按量计费的成本构成</h2><span class="fn">Fig. 8</span><span class="src">§4.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig8.png" alt="按公有云价格估算的每请求成本构成" loading="lazy"></button>
+    </figure>
+    <p>按公有云价格估算：模型 API 分缓存读取、prefill、decode 计价，沙箱按 E2B，网页搜索按 Firecrawl。工具重的应用里非模型费用占主导，Pi-AutoR 的沙箱费用超过 99%，因为它的科学计算容器带 GPU[[cost99]]。原因是闲置：沙箱和检索环境分配给会话后，即使会话在等模型推理，也一直在计费。论文由此提出，像无服务器冷启动优化那样，在闲置时暂停、存档、再恢复容器。</p>
+    <p class="mine"><b>本页说明：</b>这是按价目表估算的成本，不是实测账单；比例取决于选了哪家的沙箱和搜索价格。</p>
+  </section>
+
+  <div class="band">
+    <h2>发现二：组件、任务、单次调用三个层次的异构</h2>
+    <p>非模型部分不能当成一个整体来优化，因为它内部差异很大。论文从粗到细看三层（Fig. 9 到 Fig. 12），再用三个对照实验说明异构怎样造成干扰（Fig. 13）。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>任务层：一个组件上的不同任务相差 32 倍</h2><span class="fn">Fig. 9</span><span class="fn">Fig. 10</span><span class="src">§5.1、§5.2</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 9</span>DeepResearch 各任务的平均耗时</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig9.png" alt="DeepResearch 各任务的执行时间" loading="lazy"></button>
+      </figure>
+      <p>P1、P2 是规划，W1 到 W4 是写作的各步，S1 是总结，Emb-D 和 Emb-Q 是给文档和查询做 embedding。W2（写检索计划）和 W4（写章节）调用的是相同的模型，W4 却慢 6.43 倍[[w4]]；Emb-D 比 Emb-Q 慢 32 倍。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 10</span>各任务的输入输出规模</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig10.png" alt="DeepResearch 各任务的输入输出 token 和数据量散点" loading="lazy"></button>
+      </figure>
+      <p>差距来自输入输出的规模，与组件本身无关[[driver]]：W4 的平均输入是 W2 的 26 倍、输出是 16 倍；Emb-D 的数据量是 Emb-Q 的 325 倍。每个任务内部的点也散得很开，这就是下一层的异构。</p>
+    </div>
+    <p>组件层面的差异更直观：GPU 上的模型、吃内存的向量数据库、吃 CPU 的沙箱、依赖网络的搜索。HuggingGPT 一个应用里调用的模型，计算量就从 16.8 到 6032 GFLOP 不等。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>调用层：一次执行中的相同任务相差 30 倍</h2><span class="fn">Fig. 11</span><span class="fn">Fig. 12</span><span class="src">§5.3</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 11</span>十条 Mini-SWE 轨迹中每轮模型调用的延迟</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig11.png" alt="十条 Mini-SWE 轨迹的模型调用延迟分布" loading="lazy"></button>
+      </figure>
+      <p>每个箱子是一条轨迹内所有轮次的模型调用延迟。在一条轨迹内部，相同的模型调用任务最多相差 30 倍[[inv30]]。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 12</span>拆开一条 Mini-SWE 轨迹</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig12.png" alt="一条 Mini-SWE 执行中逐轮的输出长度、输入构成、decode 和 prefill 时间、沙箱延迟" loading="lazy"></button>
+      </figure>
+      <p>横轴是轮次。(a) 和 (c) 形状几乎一样：decode 时间跟着输出长度走，模型调用的总延迟 (e) 也主要由它决定。(b) 中命中缓存的输入（浅蓝）随轮次稳定增长，新追加的部分（深蓝）忽高忽低。(d) prefill 时间从约 0.1 秒升到 0.5 秒，整体趋势跟着总上下文长度，轮与轮之间的抖动跟着新追加的部分[[prefill-attn]]。原因是命中的前缀虽然不用重算，新 token 仍要对整个前缀做注意力。(f) 沙箱的单次调用从 sed 的 0.04 秒到 pip install 的 7.3 秒，相差 171 倍。</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>异构造成的三种干扰</h2><span class="fn">Fig. 13</span><span class="src">§5.4</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig13.png" alt="三种干扰：embedding 排队、长上下文拖慢 decode、沙箱争抢 CPU" loading="lazy"></button>
+      </figure>
+      <div class="tbl"><table>
+        <thead><tr><th>干扰</th><th class="wrap">实验设置</th><th class="wrap">结果</th></tr></thead>
+        <tbody>
+          <tr><td>(a) 排队阻塞</td><td class="wrap">短的查询 embedding 和长的文档 embedding 共用一个服务实例和队列</td><td class="wrap">查询从 5.6 ms 变成 40 ms 和 200 ms，即 7.1 倍和 35.7 倍[[hol]]</td></tr>
+          <tr><td>(b) 同批拖累</td><td class="wrap">一个 10K token 的请求与若干 128K token 的请求一起 decode</td><td class="wrap">每 token 时间从 8.01 ms 到 11.08 ms、14.39 ms[[tpot]]</td></tr>
+          <tr><td>(c) 共享资源争抢</td><td class="wrap">8 个 Codex 沙箱跑相同任务，各绑 16 核，或共用 128 核</td><td class="wrap">平均耗时从 54 秒到 66 秒，1.22 倍</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <p>三种机制对应排队、组批、物理资源三个边界。(b) 的原因是 decode 每一步要读 batch 里每个请求的 KV 缓存，长上下文请求让每一步变慢，同批的短请求也跟着慢。(c) 两种设置的总核数相同，变慢来自 CPU 调度和共享缓存、内存子系统；论文明确说，要确定是哪一种资源（例如末级缓存）还需要硬件计数器的数据[[llc]]。这些结果引出后面的按任务拆分服务。</p>
+  </section>
+
+  <div class="band">
+    <h2>发现三：瓶颈随负载和部署转移</h2>
+    <p>瓶颈指占端到端延迟最大的组件。论文逐个改变 W 的四个因素和 S 的三个因素，说明瓶颈的位置取决于应用在什么条件下被服务，不是应用本身固定的属性[[emergent]]。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>请求类型和输入大小</h2><span class="fn">Fig. 14</span><span class="src">§6.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig14.png" alt="左：Claude Code 六类请求的时间构成；右：RAG 文档大小与时间构成" loading="lazy"></button>
+    </figure>
+    <p>左图是 Claude Code 跑 MCP-Atlas 的六类请求：电影、BI、数据库三类以模型为主，最高占 90%；ETL、维基、地图三类以工具为主，最高占 84%[[mcp]]。右图是流程完全固定的 RAG，文档从 64 KB 增大到 2048 KB，瓶颈从向量数据库写入转到 embedding。改的只是请求，其他都没变。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>工具给的观察格式</h2><span class="fn">Fig. 15</span><span class="src">§6.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig15.png" alt="WebAgent 用一种或三种观察格式时的时间构成和输入 token" loading="lazy"></button>
+    </figure>
+    <p>WebAgent 可以用无障碍树（AX）、HTML、截图三种方式观察网页。只用无障碍树时观察紧凑，浏览器交互占主导；三种都用时每步输入 token 多 4.8 倍，模型推理的占比从 46.9% 升到 61.6%[[webfmt]]。工具给的信息越全，模型要读的就越多。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>换模型：速度比 token 数更能决定瓶颈</h2><span class="fn">Fig. 16</span><span class="src">§6.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig16.png" alt="DeepResearch 三种写作与总结模型组合的 token 用量和时间构成" loading="lazy"></button>
+    </figure>
+    <p>DeepResearch 的规划固定用 Qwen3.7-Max，写作和总结在 DeepSeek-V4-Flash（每秒 51 个输出 token）和 V4-Pro（21 个）之间切换。Flash+Flash 和 Pro+Flash 时 embedding 占时间最多（45%、47%）；Pro+Pro 时模型占 49%，超过 embedding 的 43%，成为新瓶颈，总时间也从 10.0 小时增加到 14.0 小时。从 Flash+Flash 换到 Pro+Flash，总 token 反而减少，模型占比却从 38% 升到 44%，所以只看 token 数预测不了时间构成[[tokens-not]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>换编排结构</h2><span class="fn">Fig. 17</span><span class="fn">Fig. 18</span><span class="src">§6.1</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 17</span>RAG 与 Dynamic RAG 的流程</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig17.png" alt="RAG 与动态 RAG 的编排结构" loading="lazy"></button>
+      </figure>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 18</span><span class="fn">Fig. 19</span>端到端延迟分布与沙箱 CPU 扩展</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/agentsysbench/fig18-19.png" alt="左：RAG 与动态 RAG 的延迟 CDF；右：Codex 沙箱在不同 CPU 核数下的耗时" loading="lazy"></button>
+      </figure>
+    </div>
+    <p>相同的任务、工具和模型，Dynamic RAG 先让模型判断要不要检索。在这批负载上 90% 的查询跳过了检索，embedding 闲下来，瓶颈从 embedding 转到模型推理[[rag90]]，延迟分布整体左移（Fig. 18）。Fig. 19 属于下一块部署因素的实验。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">实验</span><h2>部署三因素：硬件、组件服务方式、部署架构</h2><span class="src">§6.2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>改变的因素</th><th class="wrap">实验</th><th class="wrap">瓶颈怎样移动</th></tr></thead>
+      <tbody>
+        <tr><td>硬件 H</td><td class="wrap">Codex 跑十个要编译代码的 TerminalBench 任务，沙箱分配 8 到 96 个 CPU 核（Fig. 19）</td><td class="wrap">核数越多沙箱越快，瓶颈可以从沙箱执行转到模型推理</td></tr>
+        <tr><td>组件服务方式 C</td><td class="wrap">GUIAgent 的模型用 SGLang 服务，batch 从 1 调到 4</td><td class="wrap">batch 为 1 时每 token 7 ms，桌面交互是瓶颈；batch 为 4 时 30 ms，模型推理慢 4 倍，变成瓶颈[[batch]]</td></tr>
+        <tr><td>部署架构 A</td><td class="wrap">RAG 的模型、embedding、向量数据库放一台机器或分到三台</td><td class="wrap">同机时网络可忽略，向量数据库占 47%；分开且并发为 10 时网络拥塞，传输占 67.5%</td></tr>
+      </tbody>
+    </table></div>
+    <p>论文的结论是静态的 profile 和固定的资源分配跟不上这种转移，需要按请求在线调整。这一节的七个实验也说明了前面 Fig. 4 应该怎样读：那张图是默认部署下的一张快照，换一个模型速度或者沙箱配额，某个应用就可能从“工具主导”变成“模型主导”。</p>
+  </section>
+
+  <div class="band">
+    <h2>生产轨迹：三个线上应用的 24 小时</h2>
+    <p>编程智能体 35037 个会话、基于搜索的问答智能体 141376 个会话、类 Openclaw 的办公智能体 2386 个会话。这些轨迹揭示了受控实验看不到的三个现象（发现四到六）。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">发现四</span><h2>会话大部分时间在等待，状态却一直占着</h2><span class="fn">Fig. 20</span><span class="src">§7.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig20.png" alt="编程智能体会话的活跃时间占比和闲置间隔长度分布" loading="lazy"></button>
+    </figure>
+    <p>(a) 是每个编程智能体会话中，模型和工具执行的时间占会话总时长的比例。中位数只有 20%，七成会话的执行时间不到一半[[idle20]]。(b) 是闲置间隔的长度：从几秒（等工具结果、等用户批准）到几小时（隔夜），大多在 1 到 10 分钟之间；短于 10 秒的只占 14%。</p>
+    <p>闲置期间沙箱、终端上下文、KV 缓存和对话历史都还要留着，因为会话随时可能继续。只有“运行中”和“已结束”两种状态不够用：当作运行中会白占内存和磁盘，当作已结束又丢了可恢复的状态。论文建议增加一个“等待中”状态[[waiting]]，让服务层把正确性状态存档到持久层，KV 缓存则按预计的复用价值决定留下、迁移还是丢弃。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">发现五</span><h2>控制面开销：上下文、辅助调用、缓存过期</h2><span class="fn">Fig. 21</span><span class="src">§7.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig21.png" alt="一个生产会话中模型输入上下文的构成随步数变化" loading="lazy"></button>
+    </figure>
+    <p>智能体框架（harness）负责拼装提示、管理上下文、驱动和监控工具调用，这些是多步执行必需的，但带来了目标任务之外的额外开销，论文称之为 agent control-plane tax，分三种。</p>
+    <p><b>占上下文。</b>Fig. 21 是一个生产会话的输入构成。第 1 步时系统消息（角色定义、工具和技能描述、记忆等）占 99.7%；之后历史（模型的推理、工具调用和工具输出）迅速增长，最终占 84.3%。到第 261 步，模型只输出 151 个 token 决定下一步动作，却要先处理 166721 个上下文 token[[step261]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">发现五</span><h2>上下文压缩本身也很贵</h2><span class="fn">Fig. 22</span><span class="src">§7.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig22.png" alt="上下文压缩的压缩比、延迟、输入和输出 token 分布" loading="lazy"></button>
+    </figure>
+    <p>生产中的智能体用压缩（compaction）控制上下文增长：让模型把当前上下文总结成更短的版本。35037 个会话中有 3170 次压缩，99% 的压缩把上下文缩短了 70% 以上[[compact]]，说明大部分上下文可以压缩，不必原样重放。</p>
+    <p><b>辅助计算。</b>每次压缩平均读入 176K token、生成 5K token，平均耗时 156 秒，p99 为 775 秒[[compact-lat]]。除压缩外，安全检查、循环检测等辅助调用在这批会话里又多出 2684 次模型调用、650 万输入 token。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">发现五</span><h2>缓存过期造成的重复 prefill</h2><span class="fn">Fig. 23</span><span class="src">§7.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig23.png" alt="前缀缓存过期对 token 和费用的影响" loading="lazy"></button>
+    </figure>
+    <p>这个部署里缓存条目的存活时间（TTL）是 5 分钟，过期后下一次调用要重新 prefill 整个前缀。而发现四里大多数闲置间隔在 1 到 10 分钟，正好跨过这条线，固定 TTL 和人的节奏对不上[[ttl]]。59.4% 的会话至少遇到一次过期。按 Claude Opus 4.6 的价格（缓存读取、写入缓存、普通输入、输出分别为每百万 0.5、6.25、5、25 美元）估算，过期造成的缓存写入占全部缓存写入 token 的 55.9%，占总费用的 31.5%[[evict]]。</p>
+    <p>论文给出的方向：工具接口要为智能体设计（固定的 schema 标识、限制大小的观察、增量更新、按需取回完整内容的句柄）；上下文分层存放，冷的观察不进提示；KV 缓存的保留、卸载和预取由框架和模型服务协调，依据会话是否在等待、预计何时回来。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">发现六</span><h2>不同用户之间大量重复的工具调用</h2><span class="fn">Fig. 24</span><span class="src">§7.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig24.png" alt="搜索查询和 URL 抓取在会话之间的重复频率" loading="lazy"></button>
+    </figure>
+    <p>问答智能体每个请求先做一次网页搜索：373678 次搜索，平均 1.349 秒，中位数占会话延迟的 35%。27% 的不同查询在 24 小时内重复出现，这些查询贡献了全部搜索调用的 67.3%[[recur]]。办公智能体 4389 次 URL 抓取中，24% 的不同 URL 重复出现，贡献了 64% 的抓取。单个会话内看不到这种重复，要在多个智能体共用的工具服务那一层做缓存。</p>
+  </section>
+
+  <div class="band">
+    <h2>设计探索：四个原型分别对应四个发现</h2>
+    <p>四项都是单独的原型，不组成一个完整系统[[poc]]。每项在一个应用上与不区分负载特点的做法比较，资源总量相同。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">验证</span><h2>拆分服务、按通信放置、卸载沙箱</h2><span class="fn">Fig. 25</span><span class="src">§8.1 到 §8.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig25.png" alt="按任务拆分服务、组件同机放置、沙箱卸载的效果" loading="lazy"></button>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>原型（对应发现）</th><th class="wrap">做法与对照</th><th class="wrap">结果</th></tr></thead>
+      <tbody>
+        <tr><td>(a) 按任务拆分服务（发现二）</td><td class="wrap">Dynamic RAG。每个逻辑任务（查询 embedding、文档 embedding、模型判断）各自一个服务，对照是按组件共用实例，GPU 数相同；负载为峰值吞吐的 0.5、0.7、0.9 倍</td><td class="wrap">平均延迟降低 40%、38%、29%（1.26 到 0.76 秒等）</td></tr>
+        <tr><td>(b) 按通信量放置（发现一、二）</td><td class="wrap">RAG 在多机上：各组件各占一台、向量数据库与 embedding 同机、全部同机</td><td class="wrap">向量数据库与 embedding 同机，低、高负载下分别快 2.8 倍和 4.5 倍；各占一台时网络占 67.5%，同机后可忽略[[netshare]]</td></tr>
+        <tr><td>(c)(d) 卸载沙箱（发现四）</td><td class="wrap">Mini-SWE。模型规划调用超过一个固定时间后就把沙箱卸载，下一步工具调用前恢复</td><td class="wrap">平均内存降为 1/4.6，峰值降为 1/2.1，延迟变化在 0.5% 以内[[offload-res]]</td></tr>
+      </tbody>
+    </table></div>
+    <p>(b) 里全部同机最快（0.68 秒），但论文的建议是把通信多的组件放在一起，再把资源需求互补的组件（吃 GPU 的模型和吃内存的向量数据库）搭配，兼顾隔离和利用率。(c) 的触发条件只用已经等了多久，不按上下文长度预测模型调用要多久，因为 Fig. 12 已经说明延迟不随轮次单调变化。论文也说明，这个实验针对的是组件之间的短暂空闲，并非生产轨迹中人造成的长时间等待[[offload-poc]]；图中的内存是所有并发沙箱的总和，不能和单个会话 28 GB 的峰值直接比较。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">验证</span><h2>工具结果缓存</h2><span class="fn">Fig. 26</span><span class="src">§8.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/agentsysbench/fig26.png" alt="查询缓存和 URL 缓存在不同 TTL 下节省的时间与内存" loading="lazy"></button>
+    </figure>
+    <p>用发现六的生产轨迹回放两级缓存：查询完全相同就直接返回结果；URL 在有效期内抓取过就复用页面。TTL 取 10 分钟时，查询缓存省掉 35.2% 的冗余搜索调用，累计节省 27 小时搜索时间，占总量的 19.3%[[cache-res]]；URL 缓存省掉 11.65% 的抓取，节省 32 分钟。横轴是 TTL，越长省得越多，缓存占的内存也越大，但都在 1 GB 以内。</p>
+    <p class="mine"><b>本页说明：</b>“35.2% 的冗余搜索调用”的分母没有写明是全部调用还是其中的重复调用。另外 Fig. 24 里重复查询占 67.3% 的调用，按 10 分钟 TTL 只吃掉了一部分，说明很多重复隔得比 10 分钟更久；回放没有考虑搜索结果的时效，论文在要点中提到缓存需要兼顾新鲜度和租户隔离。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>AgentSysBench 把智能体负载拆成请求、工具、模型、编排四个因素，把服务系统拆成硬件、组件服务方式、部署架构三个因素，用十个应用和可替换的部署分别控制它们，再用三个线上应用的一天轨迹补上受控实验看不到的部分。</p>
+    <p>结论的主线是模型推理不再是成本的主要来源：延迟、内存和费用有很大一部分落在工具、环境和长期存在的会话状态上，而且哪一部分占主导随请求、模型和部署变化。因此服务系统要同时管理模型、工具、状态和通信。四个原型各自验证了一个方向：按任务拆分、按通信放置、闲置时卸载、跨请求缓存。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，除 Mini-SWE 和 RAG 外，模型都走商业 API，受控实验里的“LLM 时间”包含了服务商的排队和网络，十个应用之间的时间构成比较受这一点影响。第二，六个发现中前三个是在单机、顺序执行下测的，并发主要出现在干扰实验和设计探索里；多个会话同时争抢 GPU 和沙箱时的表现，还没有成体系的测量。第三，生产轨迹来自三个未具名的线上应用，只有一天，部署细节（模型、硬件、TTL 以外的缓存策略）没有公开。第四，四个设计探索都是在一个应用上的原型，对照组是简单的共享或分离部署，没有和已有的智能体服务系统比较；论文的定位也是说明这些发现可以落地，而不是给出完整方案。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="abs-gap"><blockquote lang="en">the system behavior of these workloads—where latency, cost, and bottlenecks arise—remains poorly characterized, leaving serving systems to rely on assumptions built for conventional inference.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="gap-three"><blockquote lang="en">First, recent agentic serving systems study only a few applications, often one to three, under incompatible tool, environment, model, and orchestration assumptions</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="gap-cap"><blockquote lang="en">capability benchmarks such as SWE-bench [17], AgentBench [21], WebArena [48], and OSWorld [43] measure task completion but record little systems-level information</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="interaction"><blockquote lang="en">the same application can appear LLM-dominated with a slow model, tool-dominated with a slow sandbox, state-dominated with a large live context, or network-dominated with remote placement.</blockquote><p class="loc">§2.2，第 3 页</p></li>
+      <li data-key="scale"><blockquote lang="en">Our study covers 4,641 benchmark requests, 64,924 LLM calls, 118,274 tool calls in controlled experiments, and 178,799 production sessions in a single day.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="prod-compl"><blockquote lang="en">The production study complements rather than directly validates the controlled experiments</blockquote><p class="loc">§2.3，第 4 页</p></li>
+      <li data-key="prod-need"><blockquote lang="en">Controlled experiments impose synthetic arrival processes and run tasks to completion in isolation, so they cannot surface realistic request arrivals and user think time, long-lived sessions that hold state while idle, or redundancy across requests from different users.</blockquote><p class="loc">§2.2，第 4 页</p></li>
+      <li data-key="not-sample"><blockquote lang="en">The goal is not to statistically sample all agents, but to preserve realistic task semantics while covering properties that shape latency, resource demand, state footprint, and cost.</blockquote><p class="loc">§3.1，第 4 页</p></li>
+      <li data-key="isolation"><blockquote lang="en">The guiding invariant is factor isolation: changing one factor should preserve the others whenever possible</blockquote><p class="loc">§3.2，第 5 页</p></li>
+      <li data-key="blackbox"><blockquote lang="en">Black-box third-party applications (Codex, GUIAgent, Claude Code, Openclaw, Pi-AutoR) are traced through LLM/tool proxies and sandbox hooks</blockquote><p class="loc">§3.3，第 5 页</p></li>
+      <li data-key="default"><blockquote lang="en">Mini-SWEAgent uses a self-deployed DeepSeek-V4-Pro served by SGLang v0.5.12, while the other non-RAG workflows use the Alibaba-Bailian API.</blockquote><p class="loc">§3.5，第 6 页</p></li>
+      <li data-key="gui70"><blockquote lang="en">the containerized desktop sandbox in GUIAgent accounts for over 70% of total execution time, while experimental runtimes consume 90% in Pi-AutoR.</blockquote><p class="loc">§4.1，第 7 页</p></li>
+      <li data-key="fault"><blockquote lang="en">Serving systems must therefore provide lightweight, low-overhead fault tolerance to checkpoint and resume agent sessions.</blockquote><p class="loc">§4.1，第 7 页</p></li>
+      <li data-key="prefix99"><blockquote lang="en">In contrast, applications that frequently restructure, reorder, or dynamically fetch context at each turn (e.g., DeepResearch) see prefix reuse drop to 1% or lower.</blockquote><p class="loc">§4.2，第 7 页</p></li>
+      <li data-key="kv11"><blockquote lang="en">a single Claude Code session running a large model like DeepSeek-V4 can consume up to 11 GB of GPU memory for KV cache storage.</blockquote><p class="loc">§4.3，第 7 页</p></li>
+      <li data-key="peak28"><blockquote lang="en">median sandbox peak DRAM usage is about 0.8 GB, whereas the per-session peak reaches 28 GB during compilation and unit tests.</blockquote><p class="loc">§4.3，第 8 页</p></li>
+      <li data-key="quiescent"><blockquote lang="en">scheduling sandbox checkpoints during inter-step idle intervals (e.g., when the agent is waiting for LLM generation results) avoids treating a transient working-set peak as the checkpointable live footprint.</blockquote><p class="loc">§4.3，第 8 页</p></li>
+      <li data-key="embed20"><blockquote lang="en">A request transfers over 20 MB of serialized embedding payload</blockquote><p class="loc">§4.4，第 8 页</p></li>
+      <li data-key="cost99"><blockquote lang="en">In Pi-AutoR, sandbox charges constitute over 99% of the per-request cost, driven by GPU-accelerated containers for scientific simulations.</blockquote><p class="loc">§4.5，第 9 页</p></li>
+      <li data-key="w4"><blockquote lang="en">In DeepResearch, two LLM stages—write-search-plan (W2) and write-section (W4)— issue to the same model, yet W4 is 6.43× slower (Figure 9).</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="driver"><blockquote lang="en">The driver is input/output scale, not the component itself.</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="inv30"><blockquote lang="en">within a single trace the same LLM task varies by up to 30×</blockquote><p class="loc">§5.3，第 10 页</p></li>
+      <li data-key="prefill-attn"><blockquote lang="en">Thus, total context length explains the global increase in prefill latency, while uncached input length better explains its iteration-to-iteration variation.</blockquote><p class="loc">§5.3，第 10 页</p></li>
+      <li data-key="hol"><blockquote lang="en">As the background embed-doc load increases to 106K and 128K tokens/s, its average latency rises to 40 and 200 ms, respectively—slowdowns of 7.1× and 35.7×.</blockquote><p class="loc">§5.4，第 11 页</p></li>
+      <li data-key="tpot"><blockquote lang="en">Co-serving it with one long-context request raises TPOT to 11.08 ms, a 38.3% increase; with two long-context requests, TPOT reaches 14.39 ms, a 79.7% increase (1.80×).</blockquote><p class="loc">§5.4，第 11 页</p></li>
+      <li data-key="llc"><blockquote lang="en">attributing the slowdown to a specific resource such as the last-level cache would additionally require hardware-counter measurements.</blockquote><p class="loc">§5.4，第 11 页</p></li>
+      <li data-key="emergent"><blockquote lang="en">the bottleneck location is not an intrinsic property of an application but an emergent outcome of how that application is served under a given workload.</blockquote><p class="loc">§6，第 11 页</p></li>
+      <li data-key="mcp"><blockquote lang="en">LLM dominates in Movie, BI, and DB, reaching up to 90% of total time, whereas in ETL, Wiki, and MAP, tool execution dominates (up to 84% of total time)</blockquote><p class="loc">§6.1，第 12 页</p></li>
+      <li data-key="webfmt"><blockquote lang="en">adding all three increases per-step input tokens by 4.8×, raising LLM inference from 46.9% to 61.6% of total latency.</blockquote><p class="loc">§6.1，第 12 页</p></li>
+      <li data-key="tokens-not"><blockquote lang="en">Thus, token counts alone do not predict the latency breakdown</blockquote><p class="loc">§6.1，第 12 页</p></li>
+      <li data-key="rag90"><blockquote lang="en">Under the workload in Table 2, 90% of queries bypass retrieval in RAG*, leaving embedding idle and shifting the bottleneck from embedding to LLM inference</blockquote><p class="loc">§6.1，第 13 页</p></li>
+      <li data-key="batch"><blockquote lang="en">With batch size 1, TPOT is 7 ms and tool execution (desktop interaction) dominates; at batch size 4, decode contention raises TPOT to 30 ms</blockquote><p class="loc">§6.2，第 13 页</p></li>
+      <li data-key="idle20"><blockquote lang="en">The median session executes for only 20% of its lifetime, and 70% of sessions execute for less than half of their lifetime.</blockquote><p class="loc">§7.1，第 13 页</p></li>
+      <li data-key="waiting"><blockquote lang="en">The harness should expose a third, quiescent “waiting” state</blockquote><p class="loc">§7.1，第 14 页</p></li>
+      <li data-key="step261"><blockquote lang="en">At the final step (step-261), the model emits only 151 tokens for its next action but must first process 166,721 context tokens.</blockquote><p class="loc">§7.2，第 14 页</p></li>
+      <li data-key="compact"><blockquote lang="en">Figure 22(a) shows that 99% of events reduce the context by more than 70%</blockquote><p class="loc">§7.2，第 14 页</p></li>
+      <li data-key="compact-lat"><blockquote lang="en">compaction latency averages 156 s, with p95 and p99 latencies of 161 s and 775 s, respectively.</blockquote><p class="loc">§7.2，第 15 页</p></li>
+      <li data-key="ttl"><blockquote lang="en">This fixed TTL is poorly matched to human-paced agent sessions</blockquote><p class="loc">§7.2，第 15 页</p></li>
+      <li data-key="evict"><blockquote lang="en">cache evictions contribute 55.9% of the total cache-create tokens and ultimately account for 31.5% of aggregate monetary cost across these sessions.</blockquote><p class="loc">§7.2，第 15 页</p></li>
+      <li data-key="recur"><blockquote lang="en">27% of distinct search queries recur across sessions, and these recurring queries account for 67.3% of all search invocations.</blockquote><p class="loc">§7.3，第 15 页</p></li>
+      <li data-key="poc"><blockquote lang="en">These are not components of a monolithic system; they are independent, characterization-guided interventions</blockquote><p class="loc">§8，第 16 页</p></li>
+      <li data-key="netshare"><blockquote lang="en">network communication accounts for 67.5% of execution time in the co-none baseline but becomes negligible with co-location.</blockquote><p class="loc">§8.2，第 16 页</p></li>
+      <li data-key="offload-res"><blockquote lang="en">proactive offloading reduces average and peak memory consumption by 4.6× and 2.1× respectively, with latency increasing within 0.5%.</blockquote><p class="loc">§8.3，第 16 页</p></li>
+      <li data-key="offload-poc"><blockquote lang="en">Our controlled Mini-SWE experiment is a related proof of concept for inter-component idle intervals, rather than an evaluation driven by the human-paced production pauses in §7.1.</blockquote><p class="loc">§8.3，第 16 页</p></li>
+      <li data-key="cache-res"><blockquote lang="en">With a 10-minute TTL, the query cache eliminates 35.2% of redundant search calls in the search-based QA agent, saving 27 hours of aggregate search latency (19.3% of the total).</blockquote><p class="loc">§8.4，第 17 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

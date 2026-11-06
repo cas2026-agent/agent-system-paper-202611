@@ -1,0 +1,176 @@
+<article class="view frame paper" id="view-cachescout" data-paper="cachescout" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Learning Agent Execution for KV-Cache Management in Agentic Serving</h1>
+  <p class="zh">学习智能体的执行规律来管理 KV 缓存（CacheScout）</p>
+  <p class="by">Zhang 等，UC Santa Cruz、华盛顿大学、芝加哥大学</p>
+  <div class="meta">
+    <span class="venue">arXiv 2608.14624v1，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>推理服务</span><span>KV 缓存</span><span>多智能体</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">背景</span><h2>多智能体系统里反复出现的固定前缀</h2><span class="fn">Fig. 1</span><span class="fn">Fig. 2</span><span class="src">§1</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/cachescout/fig1.png" alt="(a) 多智能体旅行规划；(b) 反复调用各智能体时 KV 缓存的变化" loading="lazy"></button>
+      </figure>
+      <div>
+        <p>多智能体系统中，一个规划者把用户请求拆给若干专门的智能体。例子：规划日本旅行，规划者先让航班智能体查航班，再让酒店智能体推荐住处，再让餐厅智能体找餐馆。每个智能体每次被调用，开头都是相同的固定内容：角色说明、工具定义、示例，具体任务接在后面。这段内容的 KV 缓存可以在每次调用该智能体时复用，跨用户会话也可以。</p>
+        <figure class="fig">
+          <button class="zoom" type="button"><img src="figures/cachescout/fig2.png" alt="四种多智能体负载中固定前缀占全部提示 token 的比例" loading="lazy"></button>
+        </figure>
+        <p>Fig. 2：在论文评估的四种负载中，这类固定内容占全部提示 token 的 53% 到 62%[[fixed]]。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">问题</span><h2>为什么现在的缓存保不住它</h2><span class="src">§1、§2.1</span></div>
+    <p>论文把这段可复用的固定前缀称为 agent anchor。在例子里，航班智能体查完后规划者去调酒店、餐厅智能体，它们的 KV 逐渐填满显存，航班智能体的 anchor 因为最近没被访问而被淘汰。规划者再回头比较另一个航班时，只能从头重算。按最近使用淘汰的策略分不清“暂时闲着”和“真的不会再用”[[recency]]。</p>
+    <dl class="defs">
+      <dt>引擎不知道是谁的块</dt><dd>vLLM、SGLang 按内容哈希管理匿名的 KV 块，知道哪个块被访问，不知道是谁用的[[who]]。</dd>
+      <dt>下一个是谁不固定</dt><dd>AutoGen、LangGraph 等框架里下一个智能体由模型在运行时决定。已有系统要么要求事先声明工作流图或由开发者标注，要么只在工具调用期间保住当前会话的 KV，下一个智能体不确定时都帮不上。</dd>
+      <dt>预测必须极快</dt><dd>淘汰发生在服务的 critical path 上；存储领域那些基于学习的替换策略要花毫秒级时间做推理，省下的 prefill 还抵不上这个开销[[fast]]。</dd>
+    </dl>
+  </section>
+
+  <div class="band">
+    <h2>测量：哪些块值得保护，下一个智能体能不能预测，能不能事先写死</h2>
+    <p>四种负载（GSM8K、MT-Bench、GAIA、SWE-bench）都跑在一个六智能体的 supervisor 框架上，用 AutoGen 的 SelectorGroupChat 由模型决定下一个智能体。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>anchor 块的复用远多于会话历史</h2><span class="fn">Fig. 3</span><span class="src">§2.2.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig3.png" alt="(a) 各类 KV 块平均被复用的次数；(b) anchor 占提示的比例随轮次变化" loading="lazy"></button>
+    </figure>
+    <p>(a) anchor 块平均被复用 49 到 173 次[[reuse]]，因为一个智能体的每次调用都会访问它，而且跨会话；属于单个会话历史的块只被复用 12 到 15 次，相差 4 到 13 倍。(b) 复用次数多还不够，还要看它占多大比例：随着会话历史累积，anchor 的占比逐渐下降，但到第十几轮仍占每个提示的 43% 到 60%[[anchor-ratio]]。两者合起来说明，保护 anchor 块收益最大。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>下一个智能体可以预测，但规律只能在线学</h2><span class="fn">Fig. 4</span><span class="fn">Fig. 5</span><span class="src">§2.2.2、§2.2.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig4.png" alt="(a) 四种协作方式下的可预测性 R；(b) 在线转移计数的预测准确率随观察次数变化" loading="lazy"></button>
+    </figure>
+    <p>可预测性 R 定义为：知道当前智能体后，下一个智能体的不确定性（熵）减少的比例，0 表示无关，1 表示完全确定。(a) 固定流水线 R 为 1.0，有主持人的辩论 0.78，由模型选下一个的 SelectorGroupChat 0.57，随机选 0.12。(b) 只用一个在线的转移计数（预测为当前智能体最常见的后继），观察 50 次调度后 top-1 准确率达到 76% 到 86%，不需要离线训练[[top1]]。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig5.png" alt="同一六智能体框架在四种协作方式下学到的转移矩阵" loading="lazy"></button>
+    </figure>
+    <p>Fig. 5：相同的六个智能体，换一种协作方式，转移矩阵完全不同。执行结构由运行时的协作行为决定，不由框架决定，所以无法离线写死，只能在线学习[[online]]。</p>
+  </section>
+
+  <div class="band">
+    <h2>设计：夹在框架和引擎之间的一层运行时</h2>
+    <p>CacheScout 不改智能体框架，也不改 vLLM 的注意力核、内存分配器和块哈希，只在两者之间交换少量元数据。三个部件分别回答：执行规律是什么、哪些块该留、接下来要准备什么。</p>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">系统</span><h2>三个部件</h2><span class="fn">Fig. 6</span><span class="fn">Fig. 7</span><span class="src">§3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig6.png" alt="CacheScout 架构：转移学习器、存活评分器、后台预取协调器" loading="lazy"></button>
+    </figure>
+    <dl class="defs">
+      <dt>① 转移学习器</dt><dd>把智能体的执行看作一阶马尔可夫链。每个请求用前缀块的哈希作为指纹识别出是哪个智能体，指纹变化就意味着一次调度，相应的转移计数加一[[fingerprint]]，转移概率就是归一化后的计数（加一个小的平滑项）。每次只改一个计数，状态有界，不需要事先知道工作流，也不需要框架配合。只学习“下一个”，因为淘汰决策只需要预见下一步。</dd>
+      <dt>②④ 存活评分器</dt><dd>理想的分数是“某个 anchor 在接下来 K 步内被用到的概率”，精确计算要枚举所有路径，太贵。近似做法（Fig. 7）：只保留高置信度的转移，构成稀疏的执行图，从当前智能体做一次广度优先搜索，得到到每个智能体的最少跳数；跳数越少，分数越高[[hop]]。每个块继承它所属 anchor 的分数，再乘以最近访问的衰减项，再乘以块的 token 数（重算代价），分数最低的先淘汰。执行可预测时存活分数起主要作用；不可预测时存活分数趋于平坦，最近访问项起主导，策略自然退化为 LRU[[lru]]。</dd>
+      <dt>③⑤ 后台预取</dt><dd>预测出下一个智能体后，在请求之间的空闲时间发一个只含该智能体 anchor 的预热请求（系统提示、工具定义和一个极短的用户提示，只生成 1 个 token）[[warmup]]。走引擎正常的 prefill 路径，生成的 KV 块与真实调用完全相同。只有可预测性 R 超过阈值时才开启，否则只用存活评分做淘汰。</dd>
+    </dl>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig7.png" alt="存活分数的计算：剪掉低置信度转移后做广度优先搜索得到跳数" loading="lazy"></button>
+    </figure>
+    <p class="cap">实现：基于 vLLM v0.11，约 2300 行运行时逻辑加一个 800 行的补丁[[impl]]，改了五个文件（块池、engine core、调度器、CPU 卸载连接器的两端），一个环境变量开关。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验</h2>
+    <p>主实验在 8 张 RTX PRO 6000（96 GB）的服务器上跑 Llama-3.1-8B-Instruct；规模实验用 4 张 H200 跑 Qwen3-235B-A22B-FP8。对照：vLLM（前缀缓存加 LRU）和 Continuum（工具调用前后按 TTL 保留 KV，TTL 取 AutoGen 中观察到的轮间延迟 0.3 秒[[ttl]]）。指标：命中率（命中缓存的提示 token 比例）、TTFT、单轮延迟（一次智能体调用的 prefill 加 decode）、吞吐（每秒完成的轮数）。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>命中率与 TTFT</h2><span class="fn">Fig. 8</span><span class="fn">Fig. 9</span><span class="src">§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig8.png" alt="四种负载下三个系统的 KV 缓存命中率与平均 TTFT" loading="lazy"></button>
+    </figure>
+    <p>CacheScout 的命中率在四种负载上都最高，比 vLLM 高 10 到 18 个百分点，达到 81% 到 85%；平均 TTFT 降低 18% 到 45%。Fig. 9 的 CDF 显示改善遍及整个分布：中位数 TTFT 降低 14% 到 52%，例如 GAIA 从 231 ms 到 114 ms[[median]]；三种负载的 P99 降低 21% 到 52%。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig9.png" alt="四种负载的 TTFT 累积分布" loading="lazy"></button>
+    </figure>
+    <p class="mine"><b>本页说明：</b>Fig. 8 中 Continuum 的命中率在四种负载上都比 vLLM 低，TTFT 也更高。TTL 0.3 秒对多智能体之间的轮转来说很短，这个对照可能没有发挥出 Continuum 的设计意图，论文没有讨论原因。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>单轮延迟、吞吐与负载</h2><span class="fn">Fig. 10</span><span class="fn">Fig. 11</span><span class="src">§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig10.png" alt="四种负载下的平均单轮延迟与峰值吞吐" loading="lazy"></button>
+    </figure>
+    <p>平均单轮延迟降低 29% 到 38%，峰值吞吐高 19% 到 57%。Fig. 11 把会话到达率从低扫到高：vLLM 的 KV 缓存饱和后吞吐就不再增长，CacheScout 推迟了饱和；在相同的平均延迟预算下，能承受的到达率是 vLLM 的 1.7 到 12 倍、Continuum 的 4.2 到 16 倍[[load]]。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig11.png" alt="平均、P90、P99 单轮延迟和吞吐随会话到达率变化" loading="lazy"></button>
+    </figure>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>消融：收益主要来自淘汰策略</h2><span class="fn">Fig. 12</span><span class="src">§5.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig12.png" alt="vLLM、只用预测淘汰、预测淘汰加预取三种配置的命中率、TTFT、单轮延迟、吞吐" loading="lazy"></button>
+    </figure>
+    <p>只开预测淘汰，命中率就比 vLLM 高 18 到 22 个百分点，单独开预取最多只多 1 个百分点[[evict-only]]。单独预取几乎没用：多数轮次没有可预热的前缀，而且预热出来的块在预测的智能体到来之前就被 LRU 淘汰了。两者合用时，预热的 anchor 被淘汰策略保护下来，在 GAIA 上单轮延迟比只用淘汰再降 28%（347 ms 到 251 ms）[[prefetch]]。</p>
+    <p class="mine"><b>本页说明：</b>两处数字对不上。消融中只用淘汰就比 vLLM 高 18 到 22 个百分点，而主结果中完整系统只高 10 到 18 个百分点；Fig. 12 与 Fig. 8 中相同指标的绝对值也不同（例如 vLLM 在 GSM8K 上的平均 TTFT，一处约 180 ms，一处约 280 ms）。两组实验的设置应当不同，论文没有说明差别。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>大模型与缓存容量</h2><span class="fn">Fig. 13</span><span class="fn">Fig. 14</span><span class="src">§5.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig13.png" alt="Qwen3-235B-A22B 上的命中率，以及 SWE-bench 上 TTFT、单轮延迟、吞吐随到达率变化" loading="lazy"></button>
+    </figure>
+    <p><b>大模型。</b>Qwen3-235B-A22B 上命中率高 7 到 13 个百分点。SWE-bench 提示长，prefill 代价高，到达率从每秒 0.2 到 2.0 个会话，平均 TTFT 都降低 33% 到 54%；vLLM 的吞吐在每秒 5.2 轮饱和，CacheScout 到 7.2 轮，高 37%[[big]]。</p>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/cachescout/fig14.png" alt="(a) 不同 GPU 缓存预算下的命中率；(b) 开关预取门控时的单轮延迟" loading="lazy"></button>
+    </figure>
+    <p><b>缓存容量。</b>(a) 缓存预算从 100 块到 200 块，CacheScout 的命中率保持在 86% 到 87%，vLLM 从 64.4% 升到 76.6%[[budget]]，要多得多的显存才能接近。低于 93 块时放不下最大的请求，不在考察范围内[[93]]。(b) 关掉按可预测性开关预取的门控，小缓存下单轮延迟最多高 22%，因为无用的预热与正常推理争抢 GPU[[gate]]。运行时的状态在 24 个智能体时也不到 25 KB，每次记录约 1 µs，计算存活分数不到 6 µs。</p>
+    <p class="mine"><b>本页说明：</b>主实验没有写明 KV 缓存的容量。敏感度实验的 100 到 200 块，按 vLLM 默认每块 16 token 计算只有约 1600 到 3200 token，仅能容纳一两个请求，是刻意制造的缓存压力；在 96 GB 显卡上跑 8B 模型的正常配置下，缓存要大几个数量级，淘汰没有这么频繁，收益会小得多。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>CacheScout 把 KV 缓存管理从“看过去谁被用过”改为“看接下来谁可能被用”。它通过前缀指纹在线识别智能体、累积一阶转移计数，用转移图上的跳数近似每个 anchor 在近期被复用的可能，结合最近访问和重算代价决定淘汰顺序；可预测时在空闲时预热下一个智能体的 anchor。整个过程不需要事先声明工作流，不需要离线训练，也不改引擎的 critical path。实验中命中率、TTFT、单轮延迟和吞吐都有明显改善，收益主要来自淘汰策略。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，四种负载都跑在作者搭建的一个六智能体框架上，SWE-bench、GAIA 等只是任务来源；真实系统中智能体的个数、anchor 的长度和调度规律可能很不一样。第二，收益来自缓存压力，而主实验的缓存容量没有交代。第三，方法依赖“相同智能体的提示前缀相同”，框架若在 anchor 中插入时间戳或动态内容，指纹就会失效。第四，一阶马尔可夫只看当前智能体，规划者根据任务进度决定下一步时，历史更长的依赖没有被利用；随机协作下 R 只有 0.12，此时退化为 LRU，没有收益但也不更差。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="fixed"><blockquote lang="en">this recurring fixed context accounts for 53– 62% of all prompt tokens across the four multi-agent workloads evaluated in this paper</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="recency"><blockquote lang="en">Recency-based cache policies cannot distinguish this temporary idle period from genuinely cold data</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="who"><blockquote lang="en">They know which block was accessed, but they do not know who used it.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="fast"><blockquote lang="en">spending milliseconds to make a better cache decision would easily cost more than the prefill computation it saves.</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="reuse"><blockquote lang="en">Agent-anchor blocks are reused 49–173 times on average</blockquote><p class="loc">§2.2.1，第 3 页</p></li>
+      <li data-key="anchor-ratio"><blockquote lang="en">even a dozen turns into a session, recurring anchor content still accounts for 43–60% of every prompt.</blockquote><p class="loc">§2.2.1，第 3 页</p></li>
+      <li data-key="top1"><blockquote lang="en">predicting the next agent as the most frequent observed successor of the current agent reaches 76–86% top-1 accuracy within 50 observed dispatches, without any offline training.</blockquote><p class="loc">§2.2.2，第 4 页</p></li>
+      <li data-key="online"><blockquote lang="en">Consequently, transition models cannot be specified offline and must instead be learned online from runtime execution history.</blockquote><p class="loc">§2.2.3，第 4 页</p></li>
+      <li data-key="fingerprint"><blockquote lang="en">each request is fingerprinted from its own prefix block hashes, so a fingerprint change signals an agent dispatch</blockquote><p class="loc">§4，第 8 页</p></li>
+      <li data-key="hop"><blockquote lang="en">Hop distance serves as an efficient proxy for future reuse</blockquote><p class="loc">§3.3，第 7 页</p></li>
+      <li data-key="lru"><blockquote lang="en">when execution becomes less predictable, survival scores flatten and the recency factor dominates, so the policy gracefully degrades toward LRU.</blockquote><p class="loc">§3.3，第 7 页</p></li>
+      <li data-key="warmup"><blockquote lang="en">the coordinator issues a lightweight warmup request containing only the predicted agent’s reusable anchor, including its system prompt, tool definitions, and a minimal user prompt.</blockquote><p class="loc">§3.4，第 7 页</p></li>
+      <li data-key="impl"><blockquote lang="en">consisting of approximately 2,300 lines of runtime logic and an 800-line patch</blockquote><p class="loc">§4，第 8 页</p></li>
+      <li data-key="ttl"><blockquote lang="en">Following the observed inter-turn latency in AutoGen, we set the TTL to 0.3 s.</blockquote><p class="loc">§5.1，第 9 页</p></li>
+      <li data-key="median"><blockquote lang="en">median TTFT drops by 14–52% (e.g., 231→114 ms on GAIA and 239→115 ms on GSM8K)</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="load"><blockquote lang="en">within the same mean-latency budget CacheScout sustains 1.7–12× the arrival rate of vanilla vLLM and 4.2–16× that of Continuum.</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="evict-only"><blockquote lang="en">Enabling predictive eviction alone increases KV-cache hit rate by 18–22 percentage points over vanilla vLLM, whereas background prefetch alone adds at most one percentage point.</blockquote><p class="loc">§5.3，第 9 页</p></li>
+      <li data-key="prefetch"><blockquote lang="en">the complete runtime reduces per-turn latency by a further 28% over eviction alone on GAIA (251 vs. 347 ms)</blockquote><p class="loc">§5.3，第 10 页</p></li>
+      <li data-key="big"><blockquote lang="en">where vanilla vLLM’s throughput saturates at 5.2 turns/s, CacheScout continues scaling to 7.2 turns/s (+37%).</blockquote><p class="loc">§5.4，第 10 页</p></li>
+      <li data-key="budget"><blockquote lang="en">vanilla vLLM improves gradually from 64.4% to 76.6%</blockquote><p class="loc">§5.4，第 10 页</p></li>
+      <li data-key="93"><blockquote lang="en">budgets below the workload’s ∼93-block maximum request footprint cannot admit every request and are excluded</blockquote><p class="loc">§5.4，第 10 页</p></li>
+      <li data-key="gate"><blockquote lang="en">disabling the gate increases per-turn latency by up to 22% at small cache sizes</blockquote><p class="loc">§5.4，第 10 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

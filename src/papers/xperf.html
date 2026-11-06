@@ -1,0 +1,262 @@
+<article class="view frame paper" id="view-xperf" data-paper="xperf" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Benchmarking LLM Serving Systems for Agentic AI Workloads with XPerf</h1>
+  <p class="zh">XPerf：用智能体负载给大模型推理服务系统做基准测试</p>
+  <p class="by">Michael Wang、Yikang Yue、Shaobo Li、Yirui Eric Zhou、Chen Wang、Jian Huang，UIUC、IBM Research</p>
+  <div class="meta">
+    <span class="venue">arXiv 2608.20370v1，cs.DC，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>推理服务</span><span>基准测试</span><span>轨迹重放</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">背景</span><h2>领域定位</h2><span class="src">§1、Table 1</span></div>
+    <div class="tree">
+      <div>与智能体相关的基准</div>
+      <div style="--d:1">智能体能力评测：Harbor、HAL，测任务完成得好不好</div>
+      <div style="--d:1">推理服务性能测试：MLPerf、LLMPerf、AIPerf，发独立请求或多轮对话</div>
+      <div style="--d:1">AA-AgentPerf：用编程智能体轨迹测服务，但闭源、轨迹不公开</div>
+      <div style="--d:2" class="on"><b>多种智能体应用、可配置负载、可复现：XPerf</b></div>
+    </div>
+    <p>智能体应用部署得越来越多，就需要知道背后的推理服务系统在这类负载下表现如何、瓶颈在哪里。已有工具各缺一块：能力评测关心智能体把任务完成得好不好，不关心服务系统[[eval-harness]]；性能测试的请求是从数据集采样或按分布合成的，彼此独立，表达不了一个用户请求展开成许多相互依赖的调用；AA-AgentPerf 只用私有的编程智能体轨迹，也不公开[[aa]]。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">问题</span><h2>一个请求跑两遍，负载就不一样</h2><span class="fn">Fig. 3</span><span class="src">§2.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig3.png" alt="(a) 两次运行中每个请求的模型调用数；(b) 两次运行中正在执行和排队的调用数随时间变化" loading="lazy"></button>
+    </figure>
+    <p>智能体下一步做什么（调哪个工具、要不要停）由模型的输出决定，而输出有随机性，小的差异一路累积，最后生成的执行图完全不同[[exec-graph]]。即使固定随机种子，批处理推理中的浮点误差也会让输出分叉[[fp]]。</p>
+    <p>用 gpt-oss-120b 跑两遍 mini-SWE-agent，请求和到达时间都相同。(a) 每个点代表一个请求，两个坐标是它在两次运行中的模型调用数，平均相差 12.9 次，是平均调用数的 76%[[var76]]。(b) 在两小时的观察窗口里，两次运行中排队的调用数走势明显分开，第二次的累计排队时间少了 65%[[q65]]，平均延迟低 25%，P95 低 30%。负载本身差这么多，就无法分辨测到的变化来自系统优化还是来自负载。</p>
+    <p class="mine"><b>本页说明：</b>§1 写的是两次运行的调用数平均相差 70%，§2.3 写的是 76%，两处不一致。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">背景</span><h2>执行图与系统分层</h2><span class="fn">Fig. 1</span><span class="fn">Fig. 2</span><span class="src">§2.1、§2.2</span></div>
+    <div class="figrow">
+      <div class="fb">
+        <h3><span class="fn">Fig. 1</span>两种应用的执行图</h3>
+        <figure class="fig">
+          <button class="zoom" type="button"><img src="figures/xperf/fig1.png" alt="mini-SWE-agent 与 Open Deep Research 的执行图示例" loading="lazy"></button>
+        </figure>
+        <p>一个用户请求在智能体内部展开成一张由模型调用和工具调用组成的有向无环图（执行图）。mini-SWE-agent 是模型和工具交替的链，模型决定调用哪个工具、何时停止；Open Deep Research 中模型决定并行开出多少路搜索。</p>
+      </div>
+      <div class="fb">
+        <h3><span class="fn">Fig. 2</span>应用层与服务层</h3>
+        <figure class="fig">
+          <button class="zoom" type="button"><img src="figures/xperf/fig2.png" alt="智能体应用层与推理服务层：路由器、多个服务引擎、调度器和 KV 缓存" loading="lazy"></button>
+        </figure>
+        <p>提示的拼装和输出的解析都在应用层，服务层看到的只是一个个普通的模型调用。服务层由一个或多个引擎组成，KV 缓存不够时调度器让多余的调用排队；多引擎时由路由器按负载和前缀缓存的位置分派。XPerf 测的是服务层，工具和应用逻辑所在的主机不在范围内[[host]]。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>方法：记录、建图、合成负载、重放</h2>
+    <p>思路是先在真实应用上录下一份轨迹，以后每次测试都重放这份轨迹，负载就固定了（Fig. 4）。难点在于：重放时服务系统已经换了，调用的发出时间不能照抄录制时的时间，而要按依赖关系重新推算。</p>
+  </div>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">方法</span><h2>整体流程与轨迹记录</h2><span class="fn">Fig. 4</span><span class="src">§3.2、§3.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig4.png" alt="XPerf 系统总览：记录轨迹、构建执行图、合成新负载、重放并采集指标" loading="lazy"></button>
+    </figure>
+    <p><b>模型调用</b>：在 OpenAI、Anthropic 等客户端库里插一层包装，记录每次调用输入和输出的 token ID、起止时间、属于哪个用户请求，不用改应用代码。<b>工具调用</b>没有统一接口：LangChain、LangGraph 里的工具同样自动包装，自己写的应用在每个工具上加一行注解；若两次调用之间超过 20 ms 没有任何已记录的调用完成，就提示那里可能有漏掉注解的代码。<b>编排函数</b>：把调用组织成链或图的函数（如 LangChain 的 Runnable）也记下起止时间，每条记录都带父节点编号，留作下一步建图用。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">方法</span><h2>从时间跨度树推出依赖</h2><span class="fn">Fig. 6</span><span class="src">§3.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig6.png" alt="(a) 记录到的时间跨度；(b) 按父子关系建成的树；(c) 推出的执行图" loading="lazy"></button>
+    </figure>
+    <p><b>为什么要建图。</b>如果按录制时的时刻把每个调用发出去，换一个更快的引擎后，一个调用提前结束，依赖它的调用却仍按原时刻发出，负载就不真实了[[why-graph]]。所以要知道每个调用依赖哪些调用，前驱全部完成才发出。</p>
+    <p><b>怎么建。</b>按父子关系把记录连成一棵树（b）：叶子是模型或工具调用，内部节点是编排函数，根是整个用户请求。自底向上合并：在一个父节点下，一个子节点结束后另一个才开始，就认为后者依赖前者，并只保留直接依赖[[dep]]；连接时从前一个子图中没有后继的调用，连到后一个子图中没有前驱的调用（c）。</p>
+    <p>只看时间先后而不看树会产生假依赖。LATS 并行跑多个独立任务，若两个任务的模型调用几乎同时结束，一个任务的工具调用会被误认为依赖另一个任务的模型调用[[false-dep]]；有了树，不同任务的调用挂在不同的内部节点下，就不会混在一起。实验中每个请求最多约 1000 次调用，建一张图不到 200 ms。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">方法</span><h2>合成新负载与重放规则</h2><span class="src">§3.5、§3.6、§4</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>层次</th><th class="wrap">怎样重放</th><th class="wrap">为什么</th></tr></thead>
+      <tbody>
+        <tr><td>单次模型调用</td><td class="wrap">模式一：发送录下的输入 token ID，让引擎忽略结束符，生成长度设为录制时的输出长度[[mode1]]。模式二：进一步强制引擎逐 token 输出录下的内容（修改了 vLLM，用一个特殊角色的消息把 token ID 传进去，每步覆盖采样结果）</td><td class="wrap">输入相同才能保持前缀缓存的命中；输出长度相同才能保持 decode 的工作量。MoE 和稀疏注意力模型的计算取决于具体 token，所以需要模式二[[moe]]</td></tr>
+        <tr><td>执行图</td><td class="wrap">一个节点的前驱全部完成后才执行；工具节点按录下的时长睡眠</td><td class="wrap">工具默认被视为与服务负载无关，因为通常跑在另一台机器上[[tool-indep]]</td></tr>
+        <tr><td>整个负载</td><td class="wrap">按到达时间逐个启动执行图；用固定大小的缓冲区边加载边释放</td><td class="wrap">内存只取决于并发请求数，与负载总量无关</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>换一种负载不用重新录。</b>录好的一批执行图可以配不同的到达方式：照录制时的时刻、按泊松过程的在线服务、开始时一次发出指定数量的离线批处理、保持固定并发数，或用户自己给出每个请求的到达时间。采集的指标有两类：从引擎的 /metrics 接口每秒读取运行和排队的调用数、KV 缓存占用、前缀命中率、token 吞吐；用 CUPTI 每 20 ms 读取 Tensor Core、SM 和显存带宽的利用率。</p>
+  </section>
+
+  <div class="band">
+    <h2>验证重放是否准确</h2>
+    <p>实验平台：每台服务器两张 H100 NVL，扩展实验用两台；vLLM v0.19.0，默认模型 gpt-oss-120b。八个应用见下表。</p>
+  </div>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">设置</span><h2>八个应用</h2><span class="fn">Table 2</span><span class="src">§5.2</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>应用</th><th>类别</th><th class="wrap">工具</th><th class="r">每请求调用数</th></tr></thead>
+      <tbody>
+        <tr><td>Open Deep Research（ODR）</td><td>深度研究</td><td class="wrap">网页搜索</td><td class="r n">69.6</td></tr>
+        <tr><td>DeerFlow</td><td>深度研究</td><td class="wrap">网页搜索</td><td class="r n">14.7</td></tr>
+        <tr><td>mini-SWE-agent</td><td>编程</td><td class="wrap">终端</td><td class="r n">17.0</td></tr>
+        <tr><td>LATS</td><td>问答</td><td class="wrap">网页搜索</td><td class="r n">10.6</td></tr>
+        <tr><td>LLMCompiler</td><td>问答</td><td class="wrap">网页搜索、终端</td><td class="r n">2.4</td></tr>
+        <tr><td>Tau-Bench</td><td>通用</td><td class="wrap">数据库</td><td class="r n">14.9</td></tr>
+        <tr><td>CUGA</td><td>通用</td><td class="wrap">网页搜索、终端</td><td class="r n">7.3</td></tr>
+        <tr><td>MagenticOne</td><td>通用</td><td class="wrap">浏览器、终端</td><td class="r n">43.7</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">调用数为每个用户请求的平均值，原表另一列给出最大值等统计。ODR 平均有 20.1 路搜索加总结同时进行；DeerFlow 串行调用，调用少但每次的提示很长。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">验证</span><h2>单个请求与并发请求的重放误差</h2><span class="fn">Fig. 7</span><span class="src">§5.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig7.png" alt="(a) 单次调用延迟的重放误差；(b) 用户请求端到端延迟的重放误差；(c) 并发重放时运行和排队调用数与原始运行的对比" loading="lazy"></button>
+    </figure>
+    <p><b>单独重放每个请求。</b>(a) 各应用单次调用的延迟与原始几乎一致，只有 ODR 有 4.6% 的调用误差超过 3%[[odr]]：它并行发出很多调用，引擎一次处理不完，重放时排队的具体组合与录制时不同。(b) 但这不影响整个请求，所有应用的端到端延迟平均绝对百分比误差都低于 3%，包括 ODR[[mape]]。</p>
+    <p><b>并发重放。</b>(c) 把 Fig. 3 中第一次运行重放两小时：每秒采样的运行和排队调用数平均只差 1.4 和 1.6 个，累计排队时间差 2.9%[[q29]]，请求延迟的平均绝对百分比误差为 1.9%。对照 Fig. 3 中两次真实运行之间 65% 的差距，重放把负载的波动降到了很小。</p>
+  </section>
+
+  <div class="band">
+    <h2>用 XPerf 观察服务系统</h2>
+    <p>以下实验展示 XPerf 能测出什么：请求延迟的分布和构成（Fig. 8、Fig. 9）、服务系统和 GPU 的指标（Fig. 10、Fig. 11）、不同服务场景（Fig. 12、Fig. 13）、多引擎扩展（Fig. 14）和调试（Fig. 15）。负载按泊松过程合成，每个请求率跑两小时。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>请求延迟：长尾来自停不下来的智能体</h2><span class="fn">Fig. 8</span><span class="src">§5.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig8.png" alt="八个应用每个用户请求的端到端延迟 CDF" loading="lazy"></button>
+    </figure>
+    <p>请求率低于饱和点。各应用的平均延迟相差很大，而且多数是长尾，P95 最高是 P50 的 6.60 倍[[tail]]。长尾主要来自没有进展却一直在调用模型和工具、不肯停下来的智能体[[noprogress]]。两个例外：DeerFlow 严格限制搜索轮数；MagenticOne 有一个负责监督的智能体，发现停滞就终止。深度研究类的最低延迟也很高，至少要做完一轮研究、写一份长报告。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>延迟构成：负载低时是 decode，负载高时是排队</h2><span class="fn">Fig. 9</span><span class="src">§5.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig9.png" alt="八个应用在不同请求率下每个输出 token 的延迟构成：排队、prefill、decode、工具" loading="lazy"></button>
+    </figure>
+    <p>纵轴是端到端延迟除以 critical path 上的输出 token 数，按排队、prefill、decode、工具拆分。未饱和时 decode 占 60% 到 98%[[decode]]，prefill 很小，只有提示最长（平均 38.8K token）的 DeerFlow 接近 23%，其余平均 4%。请求率升高，排队占比随之增长，在测试的最高请求率下最多占 69%[[queue69]]。</p>
+    <p class="mine"><b>本页说明：</b>这里的工具时间是录下的固定时长，图中占比很小，因为这些应用的工具主要是网页搜索和数据库查询；所以这张图只能说明服务端各部分的相对大小。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>服务系统指标：前缀缓存在负载升高时被冲掉</h2><span class="fn">Fig. 10</span><span class="src">§5.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig10.png" alt="八个应用随请求率变化的运行调用数、排队调用数、KV 缓存占用、前缀命中率、输入和输出吞吐" loading="lazy"></button>
+    </figure>
+    <p>每列一个应用，横轴是请求率，六行依次为：正在运行的调用数、排队的调用数、KV 缓存占用、前缀命中率、输入 token 吞吐、输出 token 吞吐。前两行一起给出饱和点：运行数到达上限后不再增加，多出的请求开始排队，例如 mini-SWE-agent 在每分钟 4.5 个请求时开始排队。饱和时多数应用的 KV 缓存接近占满；DeerFlow 只到 75% 左右，因为它每次调用约 40K token，而总容量约 213K token，剩下的空间放不下下一个调用。</p>
+    <div class="pair">
+      <div>
+        <h3>提示的写法决定能不能复用</h3>
+        <p>低负载时多数应用命中率在 41% 到 91%。ODR 只有 14%，因为输入大多是互不相关的搜索结果。DeerFlow 在所有请求率下都低于 1%：它把时间戳放在系统提示的开头，每次调用的前缀都不同[[timestamp]]；去掉时间戳后低负载时能到 30% 左右。</p>
+      </div>
+      <div>
+        <h3>负载升高后缓存被反复冲掉</h3>
+        <p>其余应用的命中率在请求率超过某个值后骤降。原因是服务系统把每次调用当作独立的，KV 缓存紧张时，会把某个请求在工具调用期间暂时没人用的上下文淘汰掉，而下一次调用马上又要用[[thrash]]。mini-SWE-agent 从 91% 掉到 4% 以下[[swe91]]；降下来后的稳定值约等于系统提示占输入的比例，因为系统提示在各请求之间共用。</p>
+      </div>
+    </div>
+    <p>被冲掉的缓存要重算，于是输入吞吐不升反降（mini-SWE-agent 最多降 12%），也拖累 decode：请求率从每分钟 3.38 个升到 4.5 个时，运行中的调用数增加 83%，输出吞吐只增加 11%[[run83]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>GPU 指标印证缓存被冲掉</h2><span class="fn">Fig. 11</span><span class="src">§5.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig11.png" alt="不同请求率下各应用的 Tensor Core 与显存带宽利用率" loading="lazy"></button>
+    </figure>
+    <p>命中率骤降的应用，接近饱和时显存带宽利用率反而下降。例如 CUGA 的请求率从每分钟 14.4 个升到 16.8 个，Tensor Core 利用率升高 55%，显存带宽利用率下降 16%。decode 主要消耗带宽，重算 prefill 主要消耗算力，所以 Tensor Core 利用率的上升并不代表效率提高，而是在重复计算[[wasted]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>离线批处理与固定并发</h2><span class="fn">Fig. 12</span><span class="fn">Fig. 13</span><span class="src">§5.6</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 12</span>离线批处理</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/xperf/fig12.png" alt="离线批处理下吞吐随请求总数变化" loading="lazy"></button>
+      </figure>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 13</span>固定并发</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/xperf/fig13.png" alt="固定并发下延迟构成与吞吐随并发数变化" loading="lazy"></button>
+      </figure>
+    </div>
+    <p>这两组用 Qwen3.6-35B-A3B。两个应用趋势相反。mini-SWE-agent 请求越多吞吐越低：批处理从 25 个增加到 200 个时下降 38%[[batch38]]，并发从 10 增加到 50 时下降 35%，都是缓存被冲掉的结果。DeerFlow 几乎没有可复用的前缀，没有东西可冲，并发越高 decode 的 batch 越大，吞吐反而上升（批处理多 35%；固定并发从 4 到 36，每分钟完成数从 0.64 到 0.95）。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>多引擎扩展：路由要保住缓存的局部性</h2><span class="fn">Fig. 14</span><span class="src">§5.7</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig14.png" alt="1、2、4 个引擎时不同路由策略下的 decode 吞吐" loading="lazy"></button>
+    </figure>
+    <p>mini-SWE-agent，固定并发，引擎从 1 个扩到 4 个，分布在两台服务器上，比较 vLLM-Router 的两种路由。轮转路由把一个请求的各次调用轮流发到不同引擎，前缀缓存的局部性被破坏，2 个和 4 个引擎只达到单引擎峰值吞吐的 1.41 倍和 2.26 倍[[rr]]；按前缀缓存路由时几乎把一个请求的调用都发到一个引擎上，达到 1.88 倍和 3.61 倍[[ca]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>调试：不固定负载会得出错误结论</h2><span class="fn">Fig. 15</span><span class="src">§5.8</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/xperf/fig15.png" alt="三份轨迹在两种调度策略下的平均端到端延迟" loading="lazy"></button>
+    </figure>
+    <p>比较两种调度：主流引擎用的按调用先来先服务，以及按请求先来先服务（先到的用户请求的所有调用整体优先）。用相同随机种子录三份 mini-SWE-agent 轨迹，每份在两种策略下各重放一次。在每份轨迹上，按请求调度持平或略好，不超过 8%[[fcfs8]]。但三份轨迹之间差得更多：100 个并发时，轨迹 2 在两种策略下的延迟都比另两份低 720 到 910 秒，因为它的长请求少（输出超过 40K token 的只有 4.5%，另两份为 12% 和 13.5%）。如果在不同的运行上测两种策略，就可能大大高估按请求调度的收益[[mislead]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>开销</h2><span class="src">§5.9</span></div>
+    <p>录制时，OpenTelemetry 让端到端延迟增加 0.1%[[overhead]]，收集轨迹的后端占用不到 5% 的 CPU 核和 2 GB 内存；平均每个请求的轨迹 4.6 MB，DeerFlow 最大的达 27.46 MB。重放时采集指标让每步 decode 增加不到 0.1%，GPU 采样每 20 ms 一次，只占 16 KB/s 的 PCIe 带宽。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>XPerf 用“录制、建图、重放”解决智能体负载不可复现的问题：录下每次模型调用的 token ID 和每次工具调用的时长，按时间跨度树推出调用之间的依赖，重放时按依赖发出调用、保持输入和输出长度不变。这样在不同的服务系统和配置上可以施加相同的负载，重放的端到端延迟误差在 3% 以内。</p>
+    <p>用它在八个应用上测出了几个现象：长尾来自停不下来的智能体；负载低时 decode 是瓶颈、高时排队是瓶颈；KV 缓存紧张时请求在工具调用期间的上下文被淘汰，导致命中率骤降和重复计算；提示开头放时间戳会让前缀缓存完全失效；多引擎的扩展效果取决于路由能否保住缓存局部性。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p>论文明确把运行应用逻辑和工具的主机排除在测量范围之外[[host]]，工具调用按录制时的时长睡眠，默认与服务负载无关；把工具参数也记下来、在主机上真实重放，是作者计划中的扩展。</p>
+    <p class="mine"><b>本页说明：</b>重放固定了执行图，这正是可复现的来源，也决定了它能评估什么。凡是会改变智能体行为本身的改动，例如换模型、改提示、调整上下文压缩策略，都会改变执行图，不能用旧轨迹评估，需要重新录制。反过来，由服务系统引起的行为变化（如延迟过长导致应用超时、改变后续动作）在重放中也不会出现。此外，实验平台是一到两台各带两张 H100 的服务器，多数结论在单引擎上得到；Fig. 15 的调度比较只用了一个应用。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="eval-harness"><blockquote lang="en">Agent evaluation harnesses [23, 28] focus on evaluating how well different agents complete tasks, rather than how the underlying serving system performs.</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="aa"><blockquote lang="en">AA-AgentPerf [6], a recent step toward benchmarking serving systems with agentic workloads, uses only proprietary coding-agent traces.</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="exec-graph"><blockquote lang="en">even for the same user request, the execution graph (i.e., the sequence of LLM calls, tool calls, and their dependencies) that an agentic application produces can differ drastically across runs</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="fp"><blockquote lang="en">Even with a fixed random seed, decoding output may diverge across executions because batched inference can introduce minute floating-point differences [70].</blockquote><p class="loc">§2.3 脚注，第 3 页</p></li>
+      <li data-key="var76"><blockquote lang="en">the total number of LLM calls triggered by identical user requests varied by an average of 12.9 calls between two runs (76% of the average number of LLM calls per request).</blockquote><p class="loc">§2.3，第 3 页</p></li>
+      <li data-key="q65"><blockquote lang="en">Within the two-hour observation window, run 2 exhibits 65% less cumulative queuing delay across all LLM calls than run 1.</blockquote><p class="loc">§2.3，第 3 页</p></li>
+      <li data-key="host"><blockquote lang="en">The host, which runs the application control logic and tool calls, falls outside this scope by design.</blockquote><p class="loc">§6，第 12 页</p></li>
+      <li data-key="why-graph"><blockquote lang="en">an improved engine that decodes tokens faster finishes each LLM call sooner, so the calls that depend on it should also be issued earlier.</blockquote><p class="loc">§3.4，第 6 页</p></li>
+      <li data-key="dep"><blockquote lang="en">XPerf treats two spans as dependent when one finishes before the other starts (line 2), and keeps only direct dependencies (line 3).</blockquote><p class="loc">§3.4，第 6 页</p></li>
+      <li data-key="false-dep"><blockquote lang="en">when two LLM calls in different tasks finish at nearly the same time, the tool call in one task can mistakenly treat an LLM call in another task as its predecessor.</blockquote><p class="loc">§3.4，第 6 页</p></li>
+      <li data-key="mode1"><blockquote lang="en">In the first mode, XPerf sends the recorded input token IDs to the serving engine to preserve the prefix-cache-hitting behavior and instructs it to ignore the EOS token</blockquote><p class="loc">§3.6，第 7 页</p></li>
+      <li data-key="moe"><blockquote lang="en">This benefits benchmarking when serving LLMs with mixture-of-experts [29] or native sparse attention [69], as the generated token IDs influence expert routing and attention sparsity.</blockquote><p class="loc">§3.6，第 7 页</p></li>
+      <li data-key="tool-indep"><blockquote lang="en">By default, XPerf treats tool-call durations as independent of serving system load, since tool calls typically execute on a separate machine.</blockquote><p class="loc">§3.5，第 7 页</p></li>
+      <li data-key="odr"><blockquote lang="en">The only visible gap is in ODR, where 4.6% of calls exceed a 3% relative error.</blockquote><p class="loc">§5.3，第 8 页</p></li>
+      <li data-key="mape"><blockquote lang="en">For all applications, the replayed request latency has a mean absolute percentage error below 3%, including ODR.</blockquote><p class="loc">§5.3，第 8 页</p></li>
+      <li data-key="q29"><blockquote lang="en">the cumulative LLM call queuing time differs by only 2.9%.</blockquote><p class="loc">§5.3，第 8 页</p></li>
+      <li data-key="tail"><blockquote lang="en">with the p95 latency reaching up to 6.60× the p50 latency.</blockquote><p class="loc">§5.4，第 8 页</p></li>
+      <li data-key="noprogress"><blockquote lang="en">This long-tail distribution is primarily caused by agents that fail to make progress yet keep issuing LLM and tool calls instead of stopping.</blockquote><p class="loc">§5.4，第 8 页</p></li>
+      <li data-key="decode"><blockquote lang="en">The end-to-end latency is dominated by decoding when the serving system is not saturated, accounting for 60%-98% across the studied applications.</blockquote><p class="loc">§5.4，第 9 页</p></li>
+      <li data-key="queue69"><blockquote lang="en">Under heavy overloaded scenarios, queuing dominates up to 69% of the end-to-end latency at the highest request rate we tested.</blockquote><p class="loc">§5.4，第 9 页</p></li>
+      <li data-key="timestamp"><blockquote lang="en">DeerFlow stays below 1% at all request rates, since it places a timestamp at the start of its system prompt, which changes the prefix of every LLM call and eliminates nearly all prefix-cache reuse.</blockquote><p class="loc">§5.5，第 10 页</p></li>
+      <li data-key="thrash"><blockquote lang="en">The drop reflects prefix-cache thrashing, where the serving system treats each LLM call as independent and evicts a request’s accumulated context while no call is using it under KV cache pressure, even though a later call will reuse it.</blockquote><p class="loc">§5.5，第 10 页</p></li>
+      <li data-key="swe91"><blockquote lang="en">in mini-SWE-agent, each call reuses this context as its prefix, reaching 91% at low rates but falling below 4% as the rate rises.</blockquote><p class="loc">§5.5，第 10 页</p></li>
+      <li data-key="run83"><blockquote lang="en">when mini-SWE-agent’s request rate rises from 3.38 to 4.5 req/min, the number of running calls grows by 83% while output-token throughput increases by only 11%.</blockquote><p class="loc">§5.5，第 11 页</p></li>
+      <li data-key="wasted"><blockquote lang="en">it reflects wasted computation due to recomputation caused by prefix-cache thrashing.</blockquote><p class="loc">§5.5，第 11 页</p></li>
+      <li data-key="batch38"><blockquote lang="en">mini-SWE-agent’s throughput decreases by 38% as total requests increase from 25 to 200, primarily due to prefix-cache thrashing.</blockquote><p class="loc">§5.6，第 11 页</p></li>
+      <li data-key="rr"><blockquote lang="en">reaching only 1.41× and 2.26× the single-engine peak output token throughput at 2 and 4 engines, respectively.</blockquote><p class="loc">§5.7，第 11 页</p></li>
+      <li data-key="ca"><blockquote lang="en">the serving system with prefix-cache-aware policy reaches 1.88× and 3.61× improvements on output token throughput at the same engine count.</blockquote><p class="loc">§5.7，第 11 页</p></li>
+      <li data-key="fcfs8"><blockquote lang="en">request-level FCFS performs comparably to or slightly better (&lt;8%) than call-level FCFS.</blockquote><p class="loc">§5.8，第 12 页</p></li>
+      <li data-key="mislead"><blockquote lang="en">If a developer happens to test call-level FCFS on the run producing trace 1 and request-level FCFS on the run producing trace 2, they would significantly overestimate the benefit of the request-level policy</blockquote><p class="loc">§5.8，第 12 页</p></li>
+      <li data-key="overhead"><blockquote lang="en">During trace recording, the OpenTelemetry tracer adds only 0.1% to end-to-end request latency</blockquote><p class="loc">§5.9，第 12 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

@@ -1,0 +1,219 @@
+<article class="view frame paper" id="view-conserve" data-paper="conserve" hidden>
+
+<header class="masthead">
+  <h1 lang="en">Observation, Not Prediction: Conversation-Level Disaggregated Scheduling for Agentic Serving</h1>
+  <p class="zh">靠观察而非预测：面向智能体服务、以会话为单位的 prefill 与 decode 分离调度（ConServe）</p>
+  <p class="by">Jianru Ding、Ryien Hosseini、Pouya Mahdi Gholami、Mingyuan Xiang、Henry Hoffmann，芝加哥大学</p>
+  <div class="meta">
+    <span class="venue">arXiv 2606.01839v1，cs.DC，2026</span>
+    <div class="crumb"><span>计算机系统</span><span>推理服务</span><span>PD 分离</span><span>异构 GPU</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">背景</span><h2>基本概念</h2><span class="src">§1、§2</span></div>
+    <dl class="defs">
+      <dt>prefill 与 decode 分离</dt><dd>prefill 主要消耗算力，decode 主要受显存带宽限制，分开放到不同 GPU 上可以互不干扰，代价是要把 prefill 产生的 KV 缓存传给 decode 那台。</dd>
+      <dt>conversation 与 turn</dt><dd>本文的 conversation 指完成一个用户请求所需的全部轮次：第一轮是很长的任务描述，之后每一轮由一次模型生成和一次工具调用组成，工具结果追加到上下文里。turn 是其中的一轮。</dd>
+      <dt>TTFET</dt><dd>time-to-first-effective-token，本文提出的指标：从会话开始到第一个用户真正看得到的进展的时间，不算那些只用来驱动工具调用的中间 token[[ttfet]]。它是会话的属性，不是某一轮的属性。</dd>
+      <dt>last-turn TBT</dt><dd>最后一轮（给用户的最终回复）相邻 token 的间隔。</dd>
+    </dl>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">问题</span><h2>按轮决定要不要分离，就得预测</h2><span class="src">§1、§2.2</span></div>
+    <p>传统服务以请求（一轮 prefill 加 decode）为调度单位。智能体负载里，用户看重的是整个会话最后有意义的输出，中间多数轮次只产生工具调用，用户从不读它们。系统优化每一轮的延迟，用户等的却是会话级的结果，论文称之为调度与价值的错位[[mismatch]]。</p>
+    <p>已有的多轮分离系统（AMPD、PPD）仍以轮为决策单位：每一轮决定是把新追加的 prefill 发到 prefill 节点（要付远程 prefill 和 KV 传输的代价）还是在 decode 节点本地做。这个决定取决于这一轮会生成多少 token、会不会调工具、KV 会增长多少，而这些在决策时都看不到，只能预测。再好的预测也会错，错一次就路由错一次[[predictor]]。论文的论点是，需要预测是选错了调度单位造成的，不是负载本身决定的[[unit]]。</p>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">思路</span><h2>换成以会话为单位，不规则就变成了两段</h2><span class="fn">Fig. 1</span><span class="src">§1、§3</span></div>
+    <div class="figgrid">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig1.png" alt="智能体轨迹前 10 轮的追加输入和输出 token 分布" loading="lazy"></button>
+      </figure>
+      <div>
+        <p>轨迹来自 swe-agent 在 SWE-bench 上的运行（Qwen3-Coder-30B-A3B 生成）。第一轮的输入是上万 token，之后每轮追加的只有几十到几百 token[[turns]]；输出则每轮差别很大，难以预测。</p>
+        <p>按轮看，各轮的生成长度、工具调用和 KV 增长都不规则。按会话看，就成了稳定的两段：第一轮一次很重的、受算力限制的 prefill，之后是一条长长的、受显存带宽限制的尾巴（第一轮的 decode 加上后续所有的小 prefill 和 decode）[[two-phase]]。这正好对应原来 prefill 与 decode 的划分，只是粒度从请求变成了会话。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="band">
+    <h2>刻画实验：为什么两段的划分站得住</h2>
+    <p>在 NVIDIA A40 上跑 Qwen3-0.6B（bf16）。选小模型是为了给不断增长的 KV 缓存留出足够的显存[[small]]。异构实验把 GPU 功率限制在额定功耗的 2/3，用来模拟算力较弱但显存硬件相近的旧一代 GPU。</p>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>prefill：第一轮贵但可预测，之后几乎免费，传 KV 不贵</h2><span class="fn">Fig. 2</span><span class="fn">Fig. 3</span><span class="src">§3.1</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 2</span>TTFT 与输入长度</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig2.png" alt="有无前缀缓存时 TTFT 随输入长度的变化及二次拟合" loading="lazy"></button>
+      </figure>
+      <p>没有缓存时，短输入的 TTFT 几乎不变，上万 token 后注意力占主导，按二次函数增长，拟合很准。无论哪一段，TTFT 都主要由输入长度决定，只看输入 token 数就能准确估计[[predictable]]。命中前缀缓存时 TTFT 几乎是常数，长输入下低两个数量级[[cache]]，中位数约 27 ms。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 3</span>KV 传输的开销</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig3.png" alt="KV 传输延迟及其占 TTFT 的比例随输入长度变化" loading="lazy"></button>
+      </figure>
+      <p>1024 token 以下传输开销约为 4.8 ms 的常数，占 TTFT 两成以上；更长时线性增长，被二次增长的 prefill 盖过。智能体第一轮正好落在长输入这一段，所以只传一次 KV 的代价很小。</p>
+    </div>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">测量</span><h2>decode：受显存带宽限制，延迟难以预测</h2><span class="fn">Fig. 4</span><span class="fn">Fig. 5</span><span class="fn">Fig. 6</span><span class="src">§3.2</span></div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 4</span>平均 TBT 随 batch 和上下文长度</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig4.png" alt="不同 batch 大小和上下文长度下平均 TBT 的热力图" loading="lazy"></button>
+      </figure>
+      <p>白色虚线左下方显存带宽未饱和，TBT 基本不变；右上方饱和后明显上升。智能体的上下文很长，decode 处在饱和区。</p>
+    </div>
+    <div class="fb">
+      <h3><span class="fn">Fig. 5</span><span class="fn">Fig. 6</span>prefill 混入 decode 的影响，以及 TBT 的波动</h3>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig5.png" alt="prefill 与 decode 混合时单步迭代延迟，有无前缀缓存" loading="lazy"></button>
+      </figure>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig6.png" alt="长时间 decode 中 TBT 的波动" loading="lazy"></button>
+      </figure>
+      <p>Fig. 5：在正在 decode 的 batch 中插入一个 prefill，命中前缀缓存时单步延迟约低一个数量级；但活跃 KV 达到 262144 token 时，单步延迟由 decode 本身决定，与插入的 prefill 关系不大[[kv262]]。Fig. 6：64 个提示跑 32 次，平均 TBT 随上下文变长而上升，单个 TBT 却忽高忽低[[tbt]]。所以 ConServe 不依赖对 decode 延迟的估计。</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span class="tag">测量</span><h2>限功率：prefill 变慢，命中缓存的 prefill 和 decode 几乎不受影响</h2><span class="fn">Fig. 7</span><span class="fn">Fig. 8</span><span class="src">§3.3</span></div>
+    <div class="figrow">
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig7.png" alt="限功率与不限功率时 TTFT 的差别" loading="lazy"></button>
+        <figcaption><span class="fig-no">Fig. 7</span>未命中缓存的长输入 prefill 在限功率后明显变慢，命中缓存的 prefill 基本不变。</figcaption>
+      </figure>
+      <figure class="fig">
+        <button class="zoom" type="button"><img src="figures/conserve/fig8.png" alt="限功率与不限功率时平均 TBT 差别的热力图" loading="lazy"></button>
+        <figcaption><span class="fig-no">Fig. 8</span>显存带宽饱和区（虚线右上）的 TBT 差别在几个百分点之内。</figcaption>
+      </figure>
+    </div>
+    <p>prefill 在长输入时受算力限制，限功率会显著拉长 TTFT[[cap]]；decode 在饱和区受带宽限制，限功率影响很小。由此得出异构部署的分工：第一轮 prefill 放在最强的 GPU 上，后面那条尾巴放到较弱的 GPU 上，性能损失不大。</p>
+  </section>
+
+  <div class="band">
+    <h2>设计：一个 prefill 节点、多个 decode 节点、每个会话只做一次决定</h2>
+  </div>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>结构与资源配置</h2><span class="fn">Fig. 9</span><span class="src">§4、§4.1</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/conserve/fig9.png" alt="ConServe 架构：prefill 节点与多个 decode 副本" loading="lazy"></button>
+    </figure>
+    <p>一个 prefill 节点加 N 个 decode 副本。会话到达时绑定到一个 decode 副本，直到会话结束都不变[[bind]]。第一轮 prefill 在 prefill 节点上做，KV 缓存传给绑定的 decode 副本一次；第一轮的 decode 和后面所有轮次都在这台上执行，跨轮复用 KV。</p>
+    <p>N 有意多配：decode 侧要同时满足吞吐（处理每个会话整个生命周期的 token）和显存（绑定的会话的 KV 都常驻）两个约束，ConServe 取满足两者的整数再多一些，使 prefill 节点先饱和[[overprov]]。这样系统的上限落在 prefill 一侧，而 prefill 的负载只看输入 token 率就能算出来。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">系统</span><h2>只看两个可观察的量</h2><span class="src">§4.2、§4.3</span></div>
+    <dl class="defs">
+      <dt>prefill 延迟曲线</dt><dd>离线测得的“输入 token 数到 prefill 时间”的函数。新会话的第一轮输入长度一到，就能算出 prefill 节点的预期负载。</dd>
+      <dt>每个 decode 副本的 KV 占用</dt><dd>会话的每一轮都会复用全部历史，所以每个活跃会话占的 KV 都是工作集；会话结束时扣除，信号只反映当前活跃的状态。</dd>
+    </dl>
+    <p>第一轮 prefill 一律发往 prefill 节点；完成并传完 KV 后，把会话绑定到当前 KV 占用最低的 decode 副本[[lowest]]，之后不再重新评估。prefill 节点快饱和、或 decode 副本整体占用过高时，把新会话导向别处或扩容，已经绑定的会话不迁移。</p>
+    <p><b>异构 GPU 不需要额外逻辑。</b>prefill 节点用最新的 GPU，decode 副本用较旧、功耗较低的 GPU；每个会话最多在两层之间传一次 KV。高功耗的算力只花在需要它的第一轮上，这是能效提升的来源。</p>
+  </section>
+
+  <div class="band">
+    <h2>实验</h2>
+    <p>在一台 4 张 A40 的机器上重放上述 SWE-bench 轨迹，服务模型 Qwen3-0.6B[[setup]]。每个副本一张卡：prefill 节点每秒约处理 25K 输入 token，每个 decode 副本每秒约生成 1K token、可容纳约 30 万 token 的 KV；配置为 1 个 prefill 加 3 个 decode（按平均每会话 15K 输入、1K 输出计算至少需要 1.67 个）。基于 vLLM 和 LMCache 实现。SLO 取单个请求无干扰时延迟的 5 倍。</p>
+  </div>
+
+  <section class="panel s5">
+    <div class="ph"><span class="tag">设置</span><h2>四种系统</h2><span class="src">§5.1</span></div>
+    <dl class="defs">
+      <dt>Collocated</dt><dd>4 张卡都是混合 batch 的副本，一个会话始终在一个副本上，prefill 和 decode 一起批处理，分块大小 2944。</dd>
+      <dt>Full Disagg</dt><dd>每一轮都经过专门的 prefill 节点。</dd>
+      <dt>AMPD</dt><dd>按轮预测是否分离的已有系统，作者自行复现。双向 KV 传输来不及实现，用模拟延迟代替[[ampd-sim]]。</dd>
+      <dt>ConServe</dt><dd>本文系统。</dd>
+    </dl>
+    <p class="mine"><b>本页说明：</b>论文说明，在他们所有的实验里，后续轮次的 prefill 在 decode 节点本地做总是更划算，正确预测的 AMPD 会全部选本地，与 ConServe 相同；因此除 Fig. 12 外，AMPD 都被人为设定了 10% 的错误预测率[[ampd10]]。下文与 AMPD 的比较，比的是“10% 决定出错”带来的损失。</p>
+  </section>
+
+  <section class="panel s7">
+    <div class="ph"><span class="tag">实验</span><h2>会话级延迟与 SLO</h2><span class="fn">Fig. 10</span><span class="src">§5.2、§5.3</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/conserve/fig10.png" alt="不同会话到达率下四种系统的 TTFET、最后一轮 TBT、端到端延迟的几何平均、P95 和 SLO 违约率" loading="lazy"></button>
+    </figure>
+    <p>三列是 TTFET、最后一轮 TBT、端到端延迟，三行是几何平均、P95、SLO 违约率，都以无干扰时的延迟为 1。到达率 0.5 到 1.5 个会话每秒为泊松到达；1.634 是让 prefill 节点恰好饱和的合成到达方式。</p>
+    <p>低到中等负载时 ConServe、AMPD、Collocated 差不多，都在 2 倍以内。到饱和时 ConServe 保持平稳，比 AMPD 的 TTFET 几何平均低 19.17%、P95 低 51.08%[[ttfet-gain]]；Collocated 因 prefill 和 decode 互相干扰、AMPD 因错误路由在 prefill 节点上积压而在 P95 上明显变差。Full Disagg 每一轮都走 prefill 节点，丢掉了跨轮复用，TTFET 和端到端都超过 10 倍，几乎全部违约。</p>
+    <p>最后一轮 TBT 的顺序相反：Full Disagg 的 decode 节点不做 prefill，TBT 最低；饱和时 ConServe 为 2.49 倍，比 Full Disagg 的 1.35 倍高 91.85%[[tbt-cost]]，这是保留跨轮复用的代价。ConServe 在所有到达率下三项指标都没有违约[[zero]]。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>逐轮的 TTFT 与 TBT 分布</h2><span class="fn">Fig. 11</span><span class="src">§5.2</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/conserve/fig11.png" alt="1.634 会话每秒时所有轮次的 TTFT 和 TBT 分布" loading="lazy"></button>
+    </figure>
+    <p>饱和点下所有轮次的 CDF。TTFT：0.7 分位以下主要是后续轮次的小 prefill，几个系统都很快；0.7 到 0.8 之间是第一轮 prefill，ConServe 明显领先，因为 Collocated 要和别的 prefill 混在一起，AMPD 要排在错误路由过来的 prefill 后面；0.8 以上 Collocated 最好，它有 4 张卡做 prefill。TBT：0.7 分位以下 Collocated 更好，因为它 4 张卡都在 decode，带宽多三分之一；之上长 prefill 混入 decode，Collocated 变差。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>按轮预测的错误率有多敏感</h2><span class="fn">Fig. 12</span><span class="src">§5.4</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/conserve/fig12.png" alt="AMPD 在不同错误预测率下的延迟、SLO 违约和能效，与 ConServe 对比" loading="lazy"></button>
+    </figure>
+    <p>错误率为 0 时 AMPD 等于 ConServe。只要 5% 的错误，TTFET 和端到端的 SLO 违约就分别约达 7.8% 和 6.3%[[err5]]；错误率升到 50% 时，延迟线性上升，违约超过 50%。原因是系统已在饱和点，每一次错误都给 prefill 节点加一份没预料到的负载，排队随累计的多余负载增长。最后一轮 TBT 不受影响，因为错误只发生在中间轮次。能效也随之下降：10% 错误时，AMPD 处理完全部负载多花 15% 的时间，每焦耳 token 数低 7.5%[[energy75]]，50% 错误时降到约 58 token/J。论文指出实验跑的是有限的一段轨迹，生产中排队会持续累积，这里的违约率只是下限。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">实验</span><h2>异构 GPU：decode 限功率换能效</h2><span class="fn">Fig. 13</span><span class="src">§5.5</span></div>
+    <figure class="fig">
+      <button class="zoom" type="button"><img src="figures/conserve/fig13.png" alt="同构（300W/300W）与异构（300W/200W）配置下的 P95 延迟与每焦耳 token 数" loading="lazy"></button>
+    </figure>
+    <p>实心是 prefill 和 decode 都 300 W，斜线是 decode 限到 200 W。ConServe 限功率后每焦耳 token 数提高 22.75%，三项 P95 延迟基本不变[[het]]，说明那条尾巴确实受带宽而非算力限制。Collocated 的 prefill 和 decode 在相同的卡上，限功率拖慢了 prefill，P95 TTFET 变差 11.15%[[coll-het]]。AMPD 也在受限的卡上 decode，能拿到相同的能效收益，但仍有错误路由的代价。</p>
+    <p class="mine"><b>本页说明：</b>从图上估读，同构配置下 ConServe 约 62 token/J，与 Collocated 的约 61 相差不大；能效上的明显差距主要来自限功率的 decode 节点，而 Collocated 限功率后约 71、ConServe 约 76。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
+    <p>ConServe 把调度单位从轮提高到会话：第一轮 prefill 发往算力强的 prefill 节点，KV 只传一次，会话的其余部分全部固定在一台 decode 副本上。决策只依据第一轮的输入长度和各 decode 副本的 KV 占用这两个看得到的量，不预测任何 decode 侧的数量。prefill 节点被有意设为瓶颈，它的负载可以准确计算，所以饱和时也能守住 SLO。两段划分也自然对应异构 GPU：decode 侧换成低功耗的卡，能效提高而延迟基本不变。</p>
+  </section>
+
+  <section class="panel s6">
+    <div class="ph"><span class="tag">局限</span><h2>局限与讨论</h2></div>
+    <p class="mine"><b>本页说明：</b>以下是本页的分析。第一，实验规模很小：一台 4 张 A40，服务的是 0.6B 的模型，轨迹却由 30B 模型生成；大模型下 prefill 和 decode 的耗时比例、KV 的大小都不同，两段划分的界线会移动。第二，异构 GPU 用限功率模拟，显存带宽和容量保持不变，真实的旧一代 GPU 显存通常也更小、更慢。第三，对 AMPD 的优势建立在人为注入的错误率上，在这些实验条件下正确预测的 AMPD 与 ConServe 相同；论文的论点更准确地说是“不必预测也能达到预测正确时的效果，并且不怕预测出错”。第四，会话绑定后不迁移，KV 只增不减，靠多配 decode 副本吸收会话长短的差异；会话很长或闲置很久时 decode 显存怎样回收，论文没有讨论。第五，只测了 SWE-bench 一种负载。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="ttfet"><blockquote lang="en">the time until the first token of genuine, user-visible progress, as opposed to the internal tokens that drive tool calls.</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="mismatch"><blockquote lang="en">The result is a scheduling–value mismatch: the system optimizes per-turn latency while the user waits on a conversation-level response.</blockquote><p class="loc">§1，第 1 页</p></li>
+      <li data-key="predictor"><blockquote lang="en">Any predictor, however well-tuned, will eventually misjudge a turn and route it incorrectly</blockquote><p class="loc">§1，第 2 页</p></li>
+      <li data-key="unit"><blockquote lang="en">We show this dependence on prediction is imposed by the scheduling unit, not the workload.</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="turns"><blockquote lang="en">Agentic conversations begin with an initial input of tens of thousands of tokens, whereas prompts appended in later turns are far smaller, on the order of hundreds.</blockquote><p class="loc">§3，第 4 页</p></li>
+      <li data-key="two-phase"><blockquote lang="en">Raising the scheduling unit from the turn to the conversation converts turn-level irregularity into a stable, two-phase structure</blockquote><p class="loc">摘要，第 1 页</p></li>
+      <li data-key="small"><blockquote lang="en">This model size is chosen to leave sufficient GPU memory headroom to accommodate the large and growing KV caches of multi-turn agentic conversations</blockquote><p class="loc">§3，第 4 页</p></li>
+      <li data-key="predictable"><blockquote lang="en">In both regimes, TTFT is determined primarily by input length, allowing prefill latency to be estimated accurately from the input-token count alone.</blockquote><p class="loc">§3.1，第 5 页</p></li>
+      <li data-key="cache"><blockquote lang="en">prefix caching reduces TTFT to near-constant, reducing latency by two orders of magnitude under long inputs.</blockquote><p class="loc">§3.1，第 5 页</p></li>
+      <li data-key="kv262"><blockquote lang="en">At 262,144 active kv-cache tokens, the iteration latency is determined by the decoding instead of the collocated prefill.</blockquote><p class="loc">§3.2，第 5 页</p></li>
+      <li data-key="tbt"><blockquote lang="en">While the mean TBT generally increases as the context length and number of iterations increase, individual TBT remains unpredictable.</blockquote><p class="loc">§3.2，第 5 页</p></li>
+      <li data-key="cap"><blockquote lang="en">Since prefill is compute-bound at high input token ranges, power-capping significantly increases TTFT.</blockquote><p class="loc">§3.3，第 6 页</p></li>
+      <li data-key="bind"><blockquote lang="en">A conversation is bound to one decoder replica at arrival, and the binding persists for the conversation’s lifetime.</blockquote><p class="loc">§4，第 6 页</p></li>
+      <li data-key="overprov"><blockquote lang="en">This deliberate overprovisioning of decoders places the system’s throughput ceiling on the prefill side</blockquote><p class="loc">§4，第 7 页</p></li>
+      <li data-key="lowest"><blockquote lang="en">the scheduler binds the conversation to the decoder replica with the lowest current KV cache occupancy.</blockquote><p class="loc">§4.2，第 8 页</p></li>
+      <li data-key="setup"><blockquote lang="en">Traces are replayed on a 4-GPU NVIDIA A40 machine with Qwen3-0.6B as the served model.</blockquote><p class="loc">§5.1，第 9 页</p></li>
+      <li data-key="ampd-sim"><blockquote lang="en">As bi-directional KV cache transfer (between two model replicas) and management is infeasible to implement in a reasonable amount of time, we simulate the latency of KV cache transfer and stall requests for that period.</blockquote><p class="loc">§5.1，第 9 页</p></li>
+      <li data-key="ampd10"><blockquote lang="en">Because in all our experiments, executing the turn 2+ prefill locally on the decoders is more effecient than migrating it to the prefiller, all reported AMPD results except Figure 12 induce a 10% wrong prediction rate</blockquote><p class="loc">§5.1，第 9 页</p></li>
+      <li data-key="ttfet-gain"><blockquote lang="en">ConServe outperforms AMPD by reducing up to 19.17% and +51.08% on geometric mean and p95 TTFET.</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="tbt-cost"><blockquote lang="en">At saturation, ConServe’s gmean last-turn TBT (2.49× baseline) is 91.85% higher than Full Disaggregation’s (1.35×).</blockquote><p class="loc">§5.2，第 9 页</p></li>
+      <li data-key="zero"><blockquote lang="en">ConServe sustains zero SLO violations across all three metrics at every request rate tested, including the 1.634 conv/s saturation point.</blockquote><p class="loc">§5.3，第 10 页</p></li>
+      <li data-key="err5"><blockquote lang="en">At just 5% wrong predictions, SLO violations reach roughly 7.8% for TTFET and 6.3% for E2E.</blockquote><p class="loc">§5.4，第 10 页</p></li>
+      <li data-key="energy75"><blockquote lang="en">AMPD takes 15% longer than ConServe to drain the workload while delivering 7.5% lower tokens-per-joule.</blockquote><p class="loc">§5.4，第 11 页</p></li>
+      <li data-key="het"><blockquote lang="en">tokens-per-joule rises by 22.75% while p95 TTFET, last-turn TBT, and E2E remain essentially unchanged.</blockquote><p class="loc">§5.5，第 11 页</p></li>
+      <li data-key="coll-het"><blockquote lang="en">its p95 TTFET worsens by 11.15% under the heterogeneous configuration.</blockquote><p class="loc">§5.5，第 12 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>

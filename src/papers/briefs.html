@@ -1,0 +1,339 @@
+<article class="view frame paper" id="view-briefs" data-paper="briefs" hidden>
+
+<header class="masthead">
+  <h1>速览：十二篇相关论文</h1>
+  <p class="zh">评测基准、智能体训练与内核、通用推理服务、推理模拟器</p>
+  <p class="by">每篇一块，讲它要解决的问题、做法和主要结果。这些论文或者不以系统层面的智能体负载为研究对象，或者是已被广泛使用的基础系统，因此不单独成页。</p>
+  <div class="meta">
+    <span class="venue">2024–2026</span>
+    <div class="crumb"><span>评测</span><span>训练与内核</span><span>推理服务</span><span>模拟器</span></div>
+  </div>
+</header>
+
+<div class="canvas">
+
+  <section class="panel">
+    <div class="ph"><span class="tag">目录</span><h2>本页的十二篇</h2></div>
+    <div class="tbl"><table>
+      <thead><tr><th>论文</th><th>发表</th><th>所在层次</th><th class="wrap">研究的问题</th></tr></thead>
+      <tbody>
+        <tr><td><a class="plink" href="#brief-tau-bench">τ-bench</a></td><td>ICLR 2025</td><td>任务与评测</td><td class="wrap">智能体能否边和用户对话边按规章办事，多次运行是否稳定</td></tr>
+        <tr><td><a class="plink" href="#brief-swe-bench-pro">SWE-Bench Pro</a></td><td>ICML 2026</td><td>任务与评测</td><td class="wrap">更难、不易被污染的跨文件代码修改任务</td></tr>
+        <tr><td><a class="plink" href="#brief-mlr-bench">MLR-Bench</a></td><td>NeurIPS 2025</td><td>任务与评测</td><td class="wrap">智能体做开放式机器学习研究的能力，以及自动评审是否可信</td></tr>
+        <tr><td><a class="plink" href="#brief-trace">TRACE</a></td><td>ICLR 2026</td><td>任务与评测</td><td class="wrap">让智能体自动把旧题改成带可复现轨迹的难题</td></tr>
+        <tr><td><a class="plink" href="#brief-agentsuite">AgentSuite</a></td><td>ICML 2026</td><td>任务与评测</td><td class="wrap">自动查出智能体基准自身的错误</td></tr>
+        <tr><td><a class="plink" href="#brief-tree-grpo">Tree-GRPO</a></td><td>ICLR 2026</td><td>智能体（强化学习训练）</td><td class="wrap">按步分叉的树形采样，在同样预算下得到更多轨迹和过程信号</td></tr>
+        <tr><td><a class="plink" href="#brief-aios">AIOS</a></td><td>COLM 2025</td><td>智能体与运行时之间</td><td class="wrap">用一层内核统一调度模型、上下文、记忆和工具调用</td></tr>
+        <tr><td><a class="plink" href="#brief-sglang">SGLang</a></td><td>NeurIPS 2024</td><td>运行时（推理服务）</td><td class="wrap">多次调用的语言模型程序的编程接口和 KV 缓存复用</td></tr>
+        <tr><td><a class="plink" href="#brief-mooncake">Mooncake</a></td><td>FAST 2025</td><td>运行时（推理服务）与存储</td><td class="wrap">prefill 与 decode 分离，用集群闲置内存和 SSD 做全局 KV 缓存</td></tr>
+        <tr><td><a class="plink" href="#brief-jitserve">JITServe</a></td><td>NSDI 2026</td><td>运行时（推理服务）</td><td class="wrap">输出长度未知时按 SLO 调度请求</td></tr>
+        <tr><td><a class="plink" href="#brief-servegen">ServeGen</a></td><td>NSDI 2026</td><td>运行时（推理服务）的负载</td><td class="wrap">刻画生产环境的推理请求，并生成接近真实的测试负载</td></tr>
+        <tr><td><a class="plink" href="#brief-vidur">Vidur</a></td><td>MLSys 2024</td><td>运行时（推理服务）与 GPU 硬件</td><td class="wrap">在 CPU 上模拟推理性能，搜索部署配置</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="band">
+    <h2>评测基准：测什么、怎样算对</h2>
+    <p>五篇论文都在任务与评测层。前三篇各自提出一个基准，TRACE 让基准自己变难，AgentSuite 检查基准本身有没有毛病。</p>
+  </div>
+
+  <section class="panel" id="brief-tau-bench">
+    <div class="ph"><span class="tag">评测</span><h2>τ-bench：和用户对话、按规章办事的客服任务</h2><span class="src">ICLR 2025，Sierra</span></div>
+    <p class="cap" lang="en">τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains</p>
+    <p><b>问题。</b>已有的智能体基准大多在开头一次给出全部信息，智能体自己和网页、终端或 API 交互，中间没有人参与，也不需要查阅领域规章[[tau-gap]]。真实的客服智能体要边问用户边办事，还要守规矩。τ-bench 测的就是这两件事，以及一件事重复做很多遍能不能每次都做对。</p>
+    <p><b>做法。</b>每个领域有一个数据库、一组读写数据库的 API 和一份规章文档。智能体能看到 API 和规章，看不到数据库本身。用户由 gpt-4-0613 扮演，它拿到一段对智能体隐藏的任务说明[[tau-user]]。构建时反复修改这段说明，直到按规章只可能有一种结果，并用 gpt-4-turbo 跑每个零售任务 40 次以上来排查歧义[[tau-unique]]。因此评分不看对话过程，只比较对话结束时的数据库和标注的目标状态，另外检查回复里有没有用户要的信息[[tau-reward]]。两个领域：零售 115 个任务，航空 50 个。</p>
+    <p><b>新指标 pass^k。</b>pass@k 是 k 次里至少成功一次的概率，pass^k 是 k 次全部成功的概率，再对任务取平均[[tau-passk]]。一个任务各次运行的用户说明和数据库都一样，变化只来自模型采样，所以 pass^k 衡量的是面对说法不同、意思相同的对话时是否稳定。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>结果</th><th class="wrap">数字</th></tr></thead>
+      <tbody>
+        <tr><td>最好的模型</td><td class="wrap">gpt-4o 用函数调用，pass^1 零售 61.2%，航空 35.2%（Table 2）</td></tr>
+        <tr><td>稳定性</td><td class="wrap">gpt-4o 在零售上平均成功率超过 60%，pass^8 却低于 25%[[tau-pass8]]</td></tr>
+        <tr><td>写法</td><td class="wrap">原生函数调用好于文本格式的 ReAct 和 Act</td></tr>
+        <tr><td>拿掉规章</td><td class="wrap">航空上 gpt-4o 从 33.2% 降到 10.8%，零售上只从 61.2% 降到 56.8%（Table 3）</td></tr>
+        <tr><td>成本</td><td class="wrap">每个零售任务智能体 0.38 美元、用户模拟 0.23 美元；智能体花费的 95.9% 是输入，主要是很长的系统提示（规章和函数定义）[[tau-cost]]</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>失败原因。</b>作者人工检查了 gpt-4o 在零售上失败的 36 条轨迹：参数或信息错误占 55%，原因是要在复杂的数据库上推理；决策错误占 25%，是没有理解或遵守规章；复合请求只办了一部分占 19%[[tau-fail]]。拿掉规章后零售几乎不掉分，说明模型在零售上的成功大多靠常识，未必真用到了规章（§5.2）。用户模拟器造成的失败在各种模拟方式下都低于 4%（Table 4）。</p>
+    <p><b>局限。</b>奖励为 1 只是成功的必要条件，智能体可能没得到用户确认就执行了退货，这违反规章但仍得分[[tau-necessary]]。任务说明是对照 gpt-4-turbo 的运行结果调出来的，存在隐性偏向[[tau-bias]]。</p>
+  </section>
+
+  <section class="panel" id="brief-swe-bench-pro">
+    <div class="ph"><span class="tag">评测</span><h2>SWE-Bench Pro：更大、更难、不易被训练数据污染的代码修改任务</h2><span class="src">ICML 2026，Scale AI</span></div>
+    <p class="cap" lang="en">SWE-Bench Pro: Can AI Agents Solve Long-Horizon Software Engineering Tasks?</p>
+    <p><b>问题。</b>SWE-Bench 类任务是给智能体一个代码仓库和一段问题描述，让它写出能通过仓库测试的补丁。这类基准有两个问题。一是污染：宽松许可证的开源仓库很可能已在预训练语料里。二是太简单：SWE-Bench Verified 的 500 题里有 161 题只需改一两行[[swep-trivial]]。</p>
+    <p><b>做法。</b>防污染靠仓库来源：公开集和保留集只用 GPL 等强 copyleft 许可证的仓库，商业集则向创业公司购买私有代码库[[swep-gpl]]。难度靠筛选：去掉 1 到 10 行的小改动，参考答案平均改 4.1 个文件、107.4 行[[swep-size]]，每个仓库最多 100 题，避免偏向某一个仓库。每题经过人工补充：除问题描述外，还给出一份由单元测试推出的需求清单，以及测试期望的类名和函数名，以免写法正确但接口名不同而被测试判错。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>子集</th><th class="r">题数</th><th class="wrap">来源与公开方式</th></tr></thead>
+      <tbody>
+        <tr><td>公开集</td><td class="r n">731</td><td class="wrap">11 个 copyleft 仓库，题目和结果都公开</td></tr>
+        <tr><td>商业集</td><td class="r n">276</td><td class="wrap">18 个创业公司私有仓库，只公开结果</td></tr>
+        <tr><td>保留集</td><td class="r n">858</td><td class="wrap">12 个 copyleft 仓库，不公开，留作日后检查过拟合</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>结果。</b>统一用 SWE-Agent 框架，最多 50 轮。公开集上 GPT-5（high）25.9%、Claude Opus 4.1 22.7%，GPT-4o 4.9%（Table 1）；商业集上最好的 Opus 4.1 只有 17.8%（Table 2）。按语言看 Go 和 Python 较高。按改动文件数看，单文件题较稳定，超过 3 个文件后差距迅速拉大，开源模型降到接近零。拿掉需求清单和接口说明，只给问题描述，GPT-5 从 25.9% 降到 8.4%，Opus 4.1 从 22.7% 降到 8.2%[[swep-ablate]]。原因是测试只认很窄的一类解法，不给接口时，写法不同的正确答案也会被判错（§6.2）。</p>
+    <p><b>失败分析。</b>用 GPT-5 当评审，读每条失败轨迹的最后 20 轮并归类（Table 4）。Opus 4.1 的失败多数是提交了错误补丁，GPT-5 的失败多数是没有提交。Sonnet 4 没提交的那部分里，超出上下文占 57.4%。</p>
+    <p class="mine"><b>本页说明：</b>正文和表格有几处数字不一致。正文写 Sonnet 4 为 16.3%、GPT-4o 为 3.9%，Table 1 是 17.6% 和 4.9%；正文给出的失败比例（如 Opus 4.1 错误补丁 35.9%）也和 Table 4 的分项对不上。本页一律采用表格中的数字。</p>
+    <p><b>局限。</b>§7.1 列出的局限是语言覆盖不均，Java、C++、Rust 较少；评判完全依赖测试，而真实任务可能有不通过原测试的正确解法[[swep-tests]]。§3.1 也提到，真实任务往往描述不全，不带需求清单的设置同样值得研究。本页的理解是，需求清单把“弄清要做什么”这部分难度拿掉了，所以这里的分数主要衡量实现能力。</p>
+  </section>
+
+  <section class="panel" id="brief-mlr-bench">
+    <div class="ph"><span class="tag">评测</span><h2>MLR-Bench：让智能体做开放式机器学习研究</h2><span class="src">NeurIPS 2025 Datasets and Benchmarks，新加坡国立大学等</span></div>
+    <p class="cap" lang="en">MLR-Bench: Evaluating AI Agents on Open-Ended Machine Learning Research</p>
+    <p><b>问题。</b>智能体已经能分别做提想法、跑实验、写论文和审稿，但还没有一个基准能系统地评估它们完成开放式研究的能力，也缺少对失败方式的实证分析，例如编造结果、缺乏新意和方法缺陷[[mlr-gap]]。</p>
+    <p><b>做法。</b>基准有三部分。任务是 201 个研究题目，取自近三年 NeurIPS、ICLR、ICML 的 workshop 介绍。MLR-Judge 是评分器，按每个阶段的评分维度打分，由 Gemini-2.5-Pro-Preview 和 Claude-3.7-Sonnet 两个模型分别打分后取平均。MLR-Agent 是一个刻意保持简单的智能体框架，把研究分成四步：想法、研究计划、实验、写论文。实验一步交给编码智能体（Claude Code、Codex），运行在 4 张 RTX 3090 的服务器上。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>阶段</th><th class="r">任务数</th><th class="wrap">主要结果（满分 10，6.0 为录用线）</th></tr></thead>
+      <tbody>
+        <tr><td>想法</td><td class="r n">201</td><td class="wrap">各模型 Overall 在 7.7 到 8.1 之间；一致性和重要性高，新颖性和可行性低</td></tr>
+        <tr><td>研究计划</td><td class="r n">201</td><td class="wrap">Overall 7.5 到 8.2，小模型 Ministral-8B 最低</td></tr>
+        <tr><td>实验</td><td class="r n">10</td><td class="wrap">Claude Code 和 Codex 的 Overall 都是 4.95，低于录用线</td></tr>
+        <tr><td>写论文</td><td class="r n">10</td><td class="wrap">最好的 Gemini 为 6.60，§3.4 将其归于前一步的实验结果太弱</td></tr>
+        <tr><td>端到端</td><td class="r n">10</td><td class="wrap">三种组合 Overall 3.10 到 4.70，最低的都是 Soundness；对照的 AI Scientist V2 为 4.25</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">实验一步的 10 个任务是从 201 个里人工挑出的，便于控制实验规模[[mlr-ten]]；后两步沿用这 10 个。</p>
+    <p><b>主要发现：编造实验结果。</b>Claude Code 做的 10 个任务里，有 8 个报告的结果来自合成数据或占位数据，并非真实运行[[mlr-80]]，这就是摘要里的 80%。作者查看执行日志后发现，这种情况通常发生在运行出错或依赖装不上时：智能体不报告失败，而是生成模拟结果填补空缺，即使明确要求不得编造也是如此[[mlr-shortcut]]。另一个常见问题是想法只是把现有方法表面地组合起来。</p>
+    <p><b>评分器可信吗。</b>10 位做过顶会审稿的专家用相同的评分细则审 AI 写的论文，每篇两人。比较“人与人的分差”和“人与 MLR-Judge 的分差”，五个维度在 0.05 水平上都没有显著差异[[mlr-judge]]，论文据此认为两者一致。</p>
+    <p class="mine"><b>本页说明：</b>“没有显著差异”不等于“证明一致”。正文和附录 E 都没有写人工评审了多少篇论文，样本少时检验很难发现差异；Clarity 的 p 值是 0.055，已接近界线。另外 201 个任务只用在前两步，涉及真实实验的结论都只来自 10 个任务。</p>
+  </section>
+
+  <section class="panel" id="brief-trace">
+    <div class="ph"><span class="tag">评测</span><h2>TRACE：让智能体把旧题改成带可复现解题轨迹的难题</h2><span class="src">ICLR 2026，上海人工智能实验室等</span></div>
+    <p class="cap" lang="en">Towards Self-Evolving Agent Benchmarks: Validatable Agent Trajectory via Test-Time Exploration（arXiv 2510.00415v3）</p>
+    <p><b>问题。</b>智能体基准很快被做满，例如 GAIA 上最好的智能体已超过 90%[[trace-gaia]]，而人工出新题又贵又慢。智能体任务也很难像数学题那样按规则改写：在真实网页环境里改一个搜索词，可能直接让题目无解；把订一张票改成订三张，只是增加重复，并没有更难[[trace-rule]]。</p>
+    <p><b>做法。</b>三个智能体分工，全部用 Qwen3-Coder-480B-A35B 驱动。</p>
+    <div class="chain">
+      <div class="node"><b>Evolution Proposer</b><small>分析原题考的是哪种能力、难点在哪，再提出几条加难的方向</small></div><span class="arr">→</span>
+      <div class="node hot"><b>Exploration Executor</b><small>沿原题的解法走，在中途插入一条方向，带着工具真实地探索，最后按走出来的轨迹反过来写出新题</small></div><span class="arr">→</span>
+      <div class="node"><b>Trajectory Validator</b><small>逐步重放每次工具调用，核对结果与记录一致，再检查整条推理是否连贯</small></div>
+    </div>
+    <p>产物是“新题和一条可复现的解题轨迹”这一对，而不只是一道题。逐步重放是为了确认新题可解：每一步的工具结果都能重现，推理链又自洽，就认为题目成立[[trace-replay]]。此外还有一个看不到轨迹的 ReAct 解题器，用 Qwen3-235B-A22B，在限定预算内能解出的题会被判为不够难，退回或丢弃[[trace-blind]]。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>模型</th><th class="r">原 GAIA</th><th class="r">第 1 轮</th><th class="r">第 2 轮</th></tr></thead>
+      <tbody>
+        <tr><td>GPT-5-Mini</td><td class="r n">0.455</td><td class="r n">0.260</td><td class="r n">0.174</td></tr>
+        <tr><td>DeepSeek-V3.1</td><td class="r n">0.418</td><td class="r n">0.247</td><td class="r n">0.188</td></tr>
+        <tr><td>Gemini-2.5-Flash</td><td class="r n">0.291</td><td class="r n">0.151</td><td class="r n">0.130</td></tr>
+        <tr><td>Kimi-K2</td><td class="r n">0.255</td><td class="r n">0.192</td><td class="r n">0.174</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">Table 1 的 Total 列，Pass@1，评测用 inspect_eval 的 ReAct 智能体，最多 100 轮。</p>
+    <p><b>结果。</b>四个模型在两轮演化后总分都明显下降，输出的 token 数同时增加：GPT-5-Mini 平均从约 2865 增到约 6276（Table 2）。方法也用到了 AIME-2024 上，演化四轮后 Qwen3-235B-A22B 的平均正确率从 0.94 降到 0.72。作者还展示了一个例子：原题是从一篇论文里查出一个数，演化后变成需要几何建模、求导优化和写代码的题，能力类别整个换了，论文称之为 From Seed to Spark。</p>
+    <p class="mine"><b>本页说明：</b>有三点读表时需要留意。第一，最终题量不大，附录给出的过滤后规模约为七十题，Level 3 只有 8 到 10 题，所以 Level 3 上出现的“演化后反而变容易”（GPT-5-Mini 第 2 轮从 0.192 升到 0.375）多半是噪声；附录正文和 Table 6 给的过滤前后题数也不一致（正文说第 1 轮 165 剩 123，表中是 119 剩 73）。第二，新题经过“某个解题器解不出”的筛选，难度上升有一部分来自筛选本身。第三，正文没有提到人工核对新题答案，题目对不对完全由验证智能体把关。</p>
+  </section>
+
+  <section class="panel" id="brief-agentsuite">
+    <div class="ph"><span class="tag">评测</span><h2>AgentSuite：自动审计智能体基准本身的错误</h2><span class="src">ICML 2026，佐治亚理工、NVIDIA 等</span></div>
+    <p class="cap" lang="en">AgentSuite: Toward More Reliable Agent Evaluation with a Component-Based Benchmark Auditing Pipeline</p>
+    <p><b>问题。</b>智能体基准的题目牵涉用户指令、环境与工具、标准答案轨迹、评分规则几部分，任何一处出错，模型的错误就和基准的错误混在一起，排行榜的比较也随之失真。这种交互式基准人工检查扩展不开，已有的自动方法也不是为跨部件的语义错误设计的[[as-scale]]。</p>
+    <p><b>做法：先分类，再自动查。</b>作者把题目拆成四个部件：User、Environment、Ground Truth、Evaluation。五位标注者在六个基准（BFCL V3、ACEBench、DrafterBench、τ-Bench、τ²-Bench、CFB，共 5086 题）上抽样阅读，自下而上归纳出一份按部件划分的错误分类（Table 2）。审计流水线 COBA 据此分两步：先用规则查出格式错误、角色混乱这类确定性问题，再让大模型（默认 Gemini-2.5-Pro-Thinking）在完整题目和这份分类的指导下判断语义问题，并说明理由。可选的第三步由另一个智能体反驳被标出的题，减少误报。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>部件</th><th class="wrap">错误类型举例（Table 2）</th></tr></thead>
+      <tbody>
+        <tr><td>User</td><td class="wrap">指令含糊而只认一种完成方式；模拟用户说出客服才会说的话（角色混乱）</td></tr>
+        <tr><td>Environment</td><td class="wrap">工具返回错误结果；缺少完成任务必需的工具；工具名和描述与实际行为不符；系统提示本身有错</td></tr>
+        <tr><td>Evaluation</td><td class="wrap">太松：论文引用 Zhu 等（2026）的发现，τ-Bench 约 38% 的题在数据库不变时就算通过，什么都不做也能得分[[as-lenient]]；太严：语义正确但措辞不同被判错</td></tr>
+        <tr><td>Ground Truth</td><td class="wrap">标准答案里的调用格式不合法、调用了错误的函数或参数、包含多余的调用</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>验证。</b>与专家标注比较：在每个基准中抽取一个错误题与正常题各半的子集，F1 在 0.791 到 0.874 之间[[as-f1]]；专家对全部被标出的题逐一复核，确认率在 72.1% 到 92.0% 之间（Table 3）。对照 τ²-Bench 已有的人工核查，COBA 找回了 15 个客观错误中的 11 个，另外找到 14 个人工核查没报告的错误[[as-tau2]]。在没参与分类构建的 BFCL V4 和 NexusBench 上，F1 为 0.842 和 0.811。</p>
+    <p><b>错误有多普遍、影响多大。</b>复核后的错误率：ACEBench 11.8%、BFCL V3 16.1%、CFB 16.2%、τ-Bench 24.2%、τ²-Bench 24.1%，DrafterBench 因重复题和系统提示错误高达 66.7%。在 ACEBench 上，错误对分数的影响方向不一致：评分过松的题平均得分 1.000，无解的题 0.035，清理后的基准是 0.780。去掉错误题后排名也会变，前两名不变，Kimi-K2-Instruct-0905 从第 8 名降到第 12 名；和随机去掉同样数量的题相比，排名变动明显更大（Kendall τ 0.871 对 0.960）[[as-rank]]。</p>
+    <p><b>局限。</b>§5 列出的局限是分类并不完备、判断依赖大模型评审，清理后的版本也不能保证剩下的题都没有错误[[as-limit]]。复核确认率最低的 BFCL V4 只有 57.9%，被标出的题有四成并不是真错误，所以流水线的输出仍需要人工复核，作者的主实验也是这样做的。</p>
+  </section>
+
+  <div class="band">
+    <h2>智能体训练与内核</h2>
+    <p>Tree-GRPO 位于智能体层的强化学习训练，改变的是训练时怎样采样轨迹。AIOS 位于智能体与运行时之间，把模型、上下文、记忆和工具调用交给一个统一的内核来调度。</p>
+  </div>
+
+  <section class="panel" id="brief-tree-grpo">
+    <div class="ph"><span class="tag">训练</span><h2>Tree-GRPO：把强化学习的轨迹采样改成按步分叉的树</h2><span class="src">ICLR 2026，厦门大学、阿里巴巴高德等</span></div>
+    <p class="cap" lang="en">Tree Search for LLM Agent Reinforcement Learning</p>
+    <p><b>问题。</b>用强化学习训练多轮智能体时有两个困难。一是采样贵：每条轨迹有上千 token 和多次工具调用，常用的分组方法（GRPO）对每道题独立采多条完整轨迹，冗余很多，采样阶段占了训练时间的大头，搜索 API 等工具调用也要花钱。二是信号稀疏：只有最终答案有奖励，整条多步轨迹只得到一个分数，无法知道是哪一步做对或做错[[tg-sparse]]。</p>
+    <p><b>做法。</b>树的每个节点是一个完整的“思考、动作、观察”步骤，不是 token 或句子。先并行生成 M 条完整轨迹作为 M 棵树，再从每棵树随机选 N 个中间节点，以根到该节点的上下文为前缀续写出新分支，重复 L 次。新分支从中途开始，平均只花半条轨迹的成本，所以同样的 token 和工具调用预算能得到更多轨迹，论文说约为 1.5 倍，具体取决于树的形状[[tg-15x]]。</p>
+    <p><b>过程信号从哪来。</b>在每个分叉点，两个子树最终奖励的差就是一个偏好信号：从这一步之后哪个方向更好。实现上在每棵树内部做一次组内相对优势（intra-tree），再在所有树之间做一次（inter-tree），两者相加。论文证明，在二元奖励的假设下，树内 GRPO 的梯度和逐步 DPO 结构相同，只差一个权重项。只用树内优势时，每棵树的分支太少，基线估计不稳，训练在预算为 4 时会崩溃（Table 4），因此需要加上树间优势。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>设置（Qwen2.5-3b，多跳问答 EM 平均）</th><th class="r">链式</th><th class="r">树式</th></tr></thead>
+      <tbody>
+        <tr><td>预算约 2 条轨迹</td><td class="r n">14.9</td><td class="r n">31.6</td></tr>
+        <tr><td>预算约 4 条</td><td class="r n">31.8</td><td class="r n">36.8</td></tr>
+        <tr><td>预算约 8 条</td><td class="r n">31.4</td><td class="r n">35.1 到 36.4</td></tr>
+        <tr><td>预算约 16 条</td><td class="r n">33.9</td><td class="r n">36.1 到 37.3</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">Table 3。预算以“每道题几条完整轨迹的 token 和工具调用量”计，树式的成本按期望计算。树式在预算 2 时的 31.6 已与链式在预算 8 时的 31.4 相当，这就是论文“只用四分之一预算”的依据。</p>
+    <p><b>结果。</b>11 个问答数据集，工具只有搜索引擎（维基百科本地检索或真实网页搜索）。多跳问答上，3b 及以下的模型相对链式 GRPO 提升 16% 到 69%，Qwen2.5-1.5b 用链式方法几乎学不会多轮调工具[[tg-small]]；7b 和 14b 上只提升 3.9% 和 8.4%。单跳问答只需检索一次，树深通常为 2，过程信号的作用有限。网页智能体任务受限于训练数据，强化学习本身提升不大，BrowseComp 上几乎没有提升。树式训练还让智能体每题平均调用工具的次数从 2.4 增加到 3.0。</p>
+    <p class="mine"><b>本页说明：</b>收益主要出现在小模型和低预算上，模型越大差距越小。另外实验只用了搜索这一种工具，工具调用便宜、无副作用；换成会改变环境状态的工具时，从中间节点续写需要先把环境恢复到那一步，这部分成本论文没有涉及。</p>
+  </section>
+
+  <section class="panel" id="brief-aios">
+    <div class="ph"><span class="tag">内核</span><h2>AIOS：在智能体和模型、工具之间加一层“操作系统内核”</h2><span class="src">COLM 2025，罗格斯大学</span></div>
+    <p class="cap" lang="en">AIOS: LLM Agent Operating System（arXiv 2403.16971v5，COLM 2025 版）</p>
+    <p><b>问题。</b>现有智能体框架让每个智能体直接访问模型和工具，没有统一的调度和资源管理。论文举的例子是，多个智能体并发时，Autogen、LangChain 等框架采用试错的方式调用模型：把 prompt 变成张量放进显存，直到 CUDA 显存不足报错，再释放、重试，吞吐因此大幅下降[[aios-retry]]。</p>
+    <p><b>做法。</b>仿照操作系统，把智能体应用和它要用的资源分成应用层和内核层。智能体的请求被拆成几类“系统调用”：模型推理、记忆读写、存储读写、工具调用，由一个调度器按 FIFO 或轮转（Round Robin）分发到各模块的队列。</p>
+    <dl class="defs">
+      <dt>LLM Core</dt><dd>把每个模型实例（云端 API 或本地模型）包装成一个“核”，对外是统一的调用接口。</dd>
+      <dt>Context Manager</dt><dd>支持轮转调度的前提：生成到一半被切走时保存现场，轮回来时恢复。闭源模型保存已生成的文本，开源模型保存解码时的搜索状态。</dd>
+      <dt>Memory、Storage Manager</dt><dd>管理智能体的对话记录和工具结果，内存超过分配额度的 80% 时按 LRU-K 换出到磁盘。</dd>
+      <dt>Tool、Access Manager</dt><dd>执行前检查工具参数，限制每个工具的并发数；按权限组控制智能体之间的数据访问，删除、覆盖等不可逆操作要求用户确认。</dd>
+    </dl>
+    <p><b>结果。</b>效果方面，五个框架（ReAct、Reflexion、Autogen、Open-Interpreter、MetaGPT）在 HumanEval、MINT、GAIA、SWE-Bench-Lite 上接入 AIOS 后成功率持平或略升，例如 Autogen 在 GAIA 上从 7.3% 升到 9.7%（Table 1）。§4.2 给出的原因是内核给模型的系统提示加了结构化的输入输出格式，以及执行前的参数检查。效率方面，单张 RTX A5000 上部署一个每次只处理一个 prompt 的模型，最多 250 个智能体并发，Reflexion 在 Llama-3.1-8b 上吞吐提高到 2.1 倍[[aios-21]]；智能体数从 250 增加到 2000 时，总耗时和平均等待时间都大致线性增长。</p>
+    <p class="mine"><b>本页说明：</b>效率实验的对照组是“框架自己反复试错加载”，加速主要来自不再因显存不足而重试，并没有和带批处理的推理服务系统比较。实验条件是一张卡、一次处理一个 prompt，这种设定下调度器能做的主要是排队。成功率的变化幅度小，而且一部分来自提示词的改动，与内核机制本身关系不大。</p>
+  </section>
+
+  <div class="band">
+    <h2>推理服务：基础系统与通用调度</h2>
+    <p>四篇都在运行时层的大模型推理服务。SGLang 和 Mooncake 是已被广泛使用的推理系统，前者管单机上的 KV 缓存复用，后者管集群上 prefill 和 decode 的分离与缓存池。JITServe 研究在信息不全时如何按 SLO 调度，ServeGen 刻画生产环境的请求负载。</p>
+  </div>
+
+  <section class="panel" id="brief-sglang">
+    <div class="ph"><span class="tag">推理服务</span><h2>SGLang：为多次调用的语言模型程序设计的前端语言和运行时</h2><span class="src">NeurIPS 2024，斯坦福、伯克利等</span></div>
+    <p class="cap" lang="en">SGLang: Efficient Execution of Structured Language Model Programs</p>
+    <p><b>问题。</b>智能体、few-shot、自洽采样、思维树这类用法，都是一个程序里多次调用模型，中间穿插控制流，输入输出还要符合固定格式。论文称之为语言模型程序。当时的推理引擎（vLLM、TGI、TensorRT-LLM）不知道上层的程序结构，一个请求结束就丢掉它的 KV 缓存[[sg-discard]]，多个调用共享的前缀因此反复计算；按格式约束解码时，也只能一次出一个 token。</p>
+    <p><b>做法。</b>前端是嵌在 Python 里的语言，提供 gen、select、fork、join 等原语，解释器把它们异步提交执行，fork 出的分支可以并行。运行时有三项优化。</p>
+    <dl class="defs">
+      <dt>RadixAttention</dt><dd>请求结束后不丢 KV 缓存，而是放进一棵基数树（radix tree），边上是 token 序列，查找、插入、淘汰都按前缀进行。显存不够时按 LRU 先淘汰叶子，正在使用的节点靠引用计数保护。缓存和正在运行的请求共用一块显存，不预留固定的缓存池。等待队列按“匹配前缀最长者优先”排序，以提高命中率；离线时这等价于按深度优先遍历，可证明命中率最优（Theorem 3.1）；代价是这种贪心排序可能让某些请求一直等下去[[sg-starve]]。</dd>
+      <dt>压缩状态机</dt><dd>按正则表达式约束输出时，把状态机里只有一条出路的连续边合并，像 <code>{"summary": "</code> 这样固定的一串可以在一次前向计算里解出来。</dd>
+      <dt>API 推测执行</dt><dd>对只能调 API 的模型，第一次调用时故意多生成一些，后面的调用若能匹配上就省掉，节省重复输入的费用。</dd>
+    </dl>
+    <p><b>结果。</b>在 Llama-7B 到 70B、Mixtral-8x7B 和 LLaVA 上，与 vLLM、Guidance、LMQL 相比吞吐最高提高到 6.4 倍，延迟最多降到 1/3.7。各项负载的缓存命中率在 50% 到 99% 之间，缓存感知调度平均达到最优命中率的 96%[[sg-hit]]。没有复用机会时，维护基数树只占 74.3 秒中的 0.2 秒。收益集中在共享前缀多、输出短的负载上：多轮对话输出较长时，几乎没有提速。部署在 Chatbot Arena 一个月，Vicuna-33B 的命中率是 74.1%，首 token 延迟平均降低 1.7 倍。</p>
+    <p class="mine"><b>本页说明：</b>对比用的是 vLLM v0.2.5，因为新版 vLLM 已部分吸收了 RadixAttention（§6.1 脚注）。实验中的 ReAct 和生成式智能体是重放原论文的调用轨迹，不包括真实的工具执行时间，所以没有涉及“工具调用期间这份缓存要不要保留”这类问题。</p>
+  </section>
+
+  <section class="panel" id="brief-mooncake">
+    <div class="ph"><span class="tag">推理服务</span><h2>Mooncake：以 KV 缓存为中心的拆分式推理架构，Kimi 的线上平台</h2><span class="src">FAST 2025，月之暗面、清华大学</span></div>
+    <p class="cap" lang="en">Mooncake: Trading More Storage for Less Computation — A KVCache-centric Architecture for Serving LLM Chatbot</p>
+    <p><b>问题。</b>服务商要在 TTFT 和 TBT（相邻 token 的间隔）两个延迟 SLO 的约束下，让满足 SLO 的吞吐最大。复用 KV 缓存能省掉 prefill 计算，但当时的做法把缓存限制在本机显存和内存里，认为全局调度需要的带宽太高。论文的测量是，本机内存的容量只能达到理论命中率的一半[[mc-local]]。</p>
+    <p><b>做法：用存储换计算。</b>论文先算了一笔账：对 LLaMA3-70B 和 8×A800，前缀长 8192 时，只要缓存的加载带宽超过约 6 GB/s，从远端取缓存就比重算快[[mc-6gb]]，而每台机器的网卡带宽远超这个数。架构据此分为三部分。</p>
+    <dl class="defs">
+      <dt>prefill 池与 decode 池分开</dt><dd>prefill 实例的目标是多复用缓存、守住 TTFT；decode 实例的目标是把 batch 做大、守住 TBT。分块 prefill 虽然能减少对 decode 的干扰，仍难以同时兼顾两者，所以保留拆分（§3.3）。长输入的 prefill 用分块流水线并行跨多台机器执行。</dd>
+      <dt>Mooncake Store</dt><dd>把整个 GPU 集群闲置的 CPU 内存、SSD 和 RDMA 网卡汇成一个分布式 KV 缓存池，缓存按块存放并按前缀哈希去重，满了按 LRU 淘汰。传输引擎按机器拓扑选网卡，一次传输切成 16 KB 的片走多条路径。</dd>
+      <dt>Conductor</dt><dd>全局调度器。对每个请求估算它在每个 prefill 实例上的 TTFT：命中前缀后剩下的计算时间加上排队时间，选最小的；最长前缀所在的实例太忙时，把缓存拷到别的实例，热门缓存因此自动多出副本。预测达不到 SLO 的请求直接拒绝，返回 HTTP 429。</dd>
+    </dl>
+    <div class="tbl"><table>
+      <thead><tr><th>负载（Table 2）</th><th class="r">平均输入</th><th class="r">平均输出</th><th class="r">可复用比例</th><th class="wrap">比 vLLM 多承载的请求（TBT 阈值 II）</th></tr></thead>
+      <tbody>
+        <tr><td>对话（Kimi 线上采样 1 小时）</td><td class="r n">12035</td><td class="r n">343</td><td class="r n">40%</td><td class="wrap">+157%（Fig. 1）</td></tr>
+        <tr><td>工具与智能体（Kimi 线上采样 1 小时）</td><td class="r n">8596</td><td class="r n">182</td><td class="r n">59%</td><td class="wrap">+42%，对照是开了前缀缓存的 vLLM（Fig. 6）</td></tr>
+        <tr><td>合成（公开数据集混合）</td><td class="r n">15325</td><td class="r n">149</td><td class="r n">66%</td><td class="wrap">+40%（Fig. 7）</td></tr>
+      </tbody>
+    </table></div>
+    <p class="cap">各配置均为 16 台 8×A800；对照是 vLLM v0.5.1，前缀缓存和分块 prefill 两项功能分别单独测试。</p>
+    <p><b>结果。</b>在最严的 TBT 阈值下，对话负载上能多承载 498% 的请求。全局缓存池的命中率最高是本机缓存的 2.36 倍，prefill 计算时间最多节省 48%[[mc-global]]。在线上，相比之前的系统，Kimi 在 A800 和 H800 集群上分别多处理了 115% 和 107% 的请求。</p>
+    <p class="mine"><b>本页说明：</b>工具与智能体负载在这里是 Kimi 线上的一类请求，特点是系统提示很长且完全重复，因此前缀复用比例高、输出短。论文只记录请求的长度和到达时间，没有涉及请求之间的工具调用间隔。可复现实验用的是结构与 LLaMA3-70B 相同的替代模型，并重放请求轨迹。</p>
+  </section>
+
+  <section class="panel" id="brief-jitserve">
+    <div class="ph"><span class="tag">推理服务</span><h2>JITServe：不知道输出多长时，按 SLO 给每个请求“刚好够用”的速度</h2><span class="src">NSDI 2026，UIUC 等</span></div>
+    <p class="cap" lang="en">JITServe: SLO-aware LLM Serving with Imprecise Request Information</p>
+    <p><b>问题。</b>作者分析了数百万条真实请求，调查了 550 多位用户，并与两家服务商交流，把请求分成三类：延迟敏感型（流式聊天，看 TTFT 和 TBT）、截止时间敏感型（要尽快拿到完整回复，例如之后要触发外部工具），以及复合型（多次相互依赖的调用，例如多智能体和深度研究，整体要在截止时间前完成）[[js-types]]。一个应用内部，不同用户的需求也不一样，例如代码生成有 38.1% 的用户偏好流式输出，30.5% 偏好尽快拿到完整结果（Table 1）。现有调度器优化的是平均值：Sarathi-Serve 只管 TBT，Autellix 优化平均完成时间，附录 E.1 证明这样做在 SLO 达成率上可以任意差。实测中 Autellix 的 SLO 违约率超过 90%（Fig. 3）。</p>
+    <p><b>指标：service goodput。</b>只计入满足 SLO 的 token。延迟敏感型逐 token 算，第 i 个 token 在 TTFT 加 i 倍 TBT 之前生成才算；另外两类是全有或全无，按时完成就算全部 token，否则为零。早于需要很多完成并不带来额外收益，省下的算力可以给别的请求。</p>
+    <p><b>做法。</b>两个估计，一个调度算法。</p>
+    <dl class="defs">
+      <dt>输出长度的上界</dt><dd>准确预测输出长度很难，JITServe 改为估一个高分位的上界，用分位数回归森林（QRF），每次约 7 ms。生成过程中每隔约 50 个 token 用已生成的内容重新估一次，上界逐步收紧[[js-qrf]]。开始时保守，越往后越接近真实。</dd>
+      <dt>依赖结构</dt><dd>复合请求的调用关系画成模式图，节点是模型或工具调用，边是依赖；运行中与历史上相似的模式做增量匹配，估计后面还有几步。</dd>
+      <dt>GMAX 算法</dt><dd>在每个时间窗内，先保证每个请求拿到完成 SLO 所需的最低速度，再按“多给一点能多换来多少 goodput”的顺序分配剩余容量；组 batch 时把输入长度相近的请求放在一起，以免长短不一拖慢每一步。</dd>
+    </dl>
+    <p><b>结果。</b>在 16 张 A100 上，用 Llama-3.1-8B 到 70B 和 Qwen3-30B-A3B 等模型，负载混合了聊天、长上下文数学推理、深度研究和智能体代码生成，到达时间按微软的真实请求轨迹。SLO 取自 1000 次 DeepSeek API 调用的 P95：TTFT 约 2 秒、TBT 约 100 ms，截止时间敏感型 20 秒，复合型每多一个阶段多 20 秒。一小时的在线运行中，goodput 比 LTR（用模型预测请求输出长短的相对排序，短的先做）高 1.3 到 1.7 倍，比 Autellix 高 5.3 到 6.1 倍；与掌握真实长度和依赖的理想版本相差 3% 到 9%[[js-oracle]]；吞吐仍有 Sarathi-Serve 的 96% 到 98%。</p>
+    <p class="mine"><b>本页说明：</b>请求属于哪一类、SLO 有多严，都是作者按用户调查的比例给请求打上的标签，真实系统需要用户或开发者提供这些信息。全有或全无的指标对复合请求比较严格，§7 也专门讨论了这个指标的局限。</p>
+  </section>
+
+  <section class="panel" id="brief-servegen">
+    <div class="ph"><span class="tag">负载</span><h2>ServeGen：阿里云线上推理负载的刻画，以及按客户端组合生成负载</h2><span class="src">NSDI 2026，北京大学、阿里巴巴</span></div>
+    <p class="cap" lang="en">ServeGen: Workload Characterization and Generation of Large Language Model Serving in Production</p>
+    <p><b>问题。</b>评测推理系统时，常见做法是拿一条到达时间轨迹（泊松过程、Gamma 过程，或把公开轨迹缩放）配上一个数据集（如 ShareGPT），论文称之为 NAIVE。论文引用云负载建模领域已有的经验：这样生成的负载比真实负载更容易服务[[sgn-naive]]。已有的推理负载分析在规模和范围上也都不够。</p>
+    <p><b>数据。</b>阿里云百炼平台四个月的请求日志，12 个模型，共 35.4 亿次请求（Table 2），分为三类：通用和领域语言模型（如 M-mid 一个月 21 亿次请求）、多模态模型、推理模型（deepseek-r1 一周 1400 万次）。只用请求的元数据：到达时间、输入输出长度、多模态输入的大小等，不看请求内容。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>负载</th><th class="wrap">主要发现</th></tr></thead>
+      <tbody>
+        <tr><td>语言模型</td><td class="wrap">短时到达有突发（变异系数大于 1），没有一种分布在所有负载上都最合适；到达率和突发程度随时间变化。输入长度可用 Pareto 与对数正态混合描述，输出长度很接近指数分布，即剩余长度与已生成长度无关；输入和输出的相关性弱。长度分布随时间漂移，平均输入最多相差 1.63 倍，且输入和输出的变化彼此独立。</td></tr>
+        <tr><td>按客户端拆开</td><td class="wrap">M-small 的 2412 个客户端里，前 29 个贡献了 90% 的请求。单个大客户的行为很稳定，整体负载的突发和漂移主要来自这些大客户请求量的起伏[[sgn-client]]。</td></tr>
+        <tr><td>多模态</td><td class="wrap">图像、音频、视频的 token 长度集中在少数几个值附近，各模态负载变化彼此独立。一半的图像请求有 75% 的首 token 时间花在 prefill 之前的下载、预处理和编码上。</td></tr>
+        <tr><td>推理模型</td><td class="wrap">思考部分平均是回答部分的 4 倍长，两者之比呈双峰分布。到达不怎么突发，约 10% 是多轮对话中的后续轮次，相邻两轮间隔集中在 100 秒左右。</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>生成器与用途。</b>ServeGen 按客户端分别采样到达时间和请求数据再合并，客户端的参数来自真实数据。在两个案例中它比 NAIVE 更接近真实情况。一是规划实例数：要满足 P99 TTFT 2.25 秒、TBT 0.5 秒，用 ServeGen 估出 25 个实例，比实际所需多 4%；NAIVE 只估出 12 个，少了一半[[sgn-prov]]。二是 prefill 与 decode 分离的配比：在 32 张 H20 上，两种负载选出的最佳配比不同，ServeGen 下最好的 2P6D，在 NAIVE 下反而显得较差。</p>
+    <p class="mine"><b>本页说明：</b>§7 的局限中写明，先调用一系列函数（网页搜索、数据库查询、外部 API）再推理的插件式请求没有纳入刻画，前缀缓存也因不看请求内容而无法分析[[sgn-plugin]]。所以这份刻画讲的是逐个独立的请求，不包括智能体那种多轮相依、中间夹着工具调用的负载。</p>
+  </section>
+
+  <div class="band">
+    <h2>推理模拟器</h2>
+    <p>Vidur 在 CPU 上模拟大模型推理服务的性能，用来在不占用 GPU 的情况下搜索部署配置。它位于运行时层的推理服务，同时涉及下面的 GPU 硬件。</p>
+  </div>
+
+  <section class="panel" id="brief-vidur">
+    <div class="ph"><span class="tag">模拟器</span><h2>Vidur：在 CPU 上模拟大模型推理，搜索最省钱的部署配置</h2><span class="src">MLSys 2024，微软研究院印度、佐治亚理工</span></div>
+    <p class="cap" lang="en">Vidur: A Large-Scale Simulation Framework for LLM Inference</p>
+    <p><b>问题。</b>部署一个模型要选并行方式（TP、PP、副本数）、调度器（vLLM、Orca、Sarathi-Serve）、batch 大小、GPU 型号等等，配置空间很大。最优配置还取决于负载：以 LLaMA2-70B 为例，把为一条轨迹找到的最优配置用在另一条轨迹上，成本最多高出 2 倍（Fig. 1b）。在真机上逐一试代价太高，而训练用的模拟器不适用于推理：推理每一步只有几毫秒，每步的 batch 组成都在变，单步的小误差会改变后续组批，逐步累积[[vd-cascade]]。</p>
+    <p><b>做法。</b>大多数大模型的结构相似，可以拆成少数几类算子，按决定耗时的因素分类测量。</p>
+    <dl class="defs">
+      <dt>token 级算子</dt><dd>线性层、激活函数等，耗时只取决于这一步处理的 token 总数。</dd>
+      <dt>序列级算子</dt><dd>注意力。prefill 的注意力耗时与长度平方成正比，一批 prefill 折算成一个等效长度；decode 的注意力受内存带宽限制，只按这一批要读的 KV 缓存总量估计。</dd>
+      <dt>通信算子</dt><dd>all-reduce、all-gather、send/recv，只与数据量有关，与模型无关，提前单独测量。</dd>
+    </dl>
+    <p>只在一张 GPU 上测量少量输入规模，再用随机森林回归插值出其他规模的耗时；不同的 TP 切分方式也从这一张卡上的测量推出。模拟器本身是事件驱动的，分三层调度：全局路由、副本内的组批与显存管理（实现了五种组批策略，每种不超过 150 行 Python）、流水线阶段内的微批调度。</p>
+    <p><b>结果。</b>在 A100 和 H100 上测试 LLaMA2-7B/70B、InternLM-20B、Qwen-72B 三种负载。请求全部预先到达时，P95 执行时间的误差不超过 3.33%；按泊松过程到达、负载为容量的 85% 时，几乎所有情况误差都低于 5%，最大的一处是 LLaMA2-7B 的 8.5%（Fig. 4），小模型误差偏大的原因是 CPU 开销占比较高（§7.2）。越接近容量上限，任何微小偏差都会因排队而被放大[[vd-capacity]]。Vidur-Search 用二分搜索找出每种配置不排队积压时的最大 QPS，再选每美元 QPS 最高的配置：四个模型乘三种负载的完整搜索在模拟中花 125 美元，真机执行估计需要 114 万美元[[vd-cost]]。搜索还显示，TBT 的 SLO 从 0.12 秒放宽到 0.14 秒，最低成本下降约 1.85 倍。</p>
+    <p class="mine"><b>本页说明：</b>验证中的负载是彼此独立的请求，总长度截到 4096 token，没有前缀缓存和 prefill、decode 分离。正文的验证停在容量的 85%，附录 A.1 补测到 95%：大模型仍然准确，LLaMA2-7B 的误差则逐步累积，最高到 12.65%[[vd-95]]，超出摘要所说的 9% 以内。</p>
+  </section>
+
+  <details class="qbox">
+    <summary>原文引用<span>英文逐字摘录，标注论文和 PDF 页码，编号与角标对应</span></summary>
+    <ol class="quotes">
+      <li data-key="tau-gap"><blockquote lang="en">for language agents often feature simplified instruction-following setups, where the agent autonomously interacts with an environment (web, code terminal, or APIs) given all the information upfront, without any human-in-the-loop interaction and without the need to consult any domain-specific guidelines.</blockquote><p class="loc">τ-bench，§1，第 1 页</p></li>
+      <li data-key="tau-user"><blockquote lang="en">We use a language model (gpt-4-0613) to simulate a human user interacting with the agent.</blockquote><p class="loc">τ-bench，§3，第 3 页</p></li>
+      <li data-key="tau-unique"><blockquote lang="en">we run each τ -retail task with > 40 gpt-4-turbo trials and check all tasks with zero or low success rates</blockquote><p class="loc">τ-bench，§4，第 5 页</p></li>
+      <li data-key="tau-reward"><blockquote lang="en">Our evaluation scheme compares the database state at the end of each episode with the ground truth expected state.</blockquote><p class="loc">τ-bench，§1，第 2 页</p></li>
+      <li data-key="tau-passk"><blockquote lang="en">defined as the chance that all k i.i.d. task trials are successful, averaged across tasks.</blockquote><p class="loc">τ-bench，§3，第 5 页</p></li>
+      <li data-key="tau-pass8"><blockquote lang="en">Even for the best-performing gpt-4o function calling agent which has a > 60% average task success, passˆ8 drops</blockquote><p class="loc">τ-bench，§5.1，第 7 页</p></li>
+      <li data-key="tau-cost"><blockquote lang="en">For the agent, the input prompt / completion output take up 95.9% / 4.1% of the price respectively, so the cost is mainly due to long system prompt (domain policy + function definitions).</blockquote><p class="loc">τ-bench，§5.1，第 8 页</p></li>
+      <li data-key="tau-fail"><blockquote lang="en">These failures account for 55% of overall failures and highlight the need for improved common sense and numerical reasoning</blockquote><p class="loc">τ-bench，§5.2，第 8 页</p></li>
+      <li data-key="tau-necessary"><blockquote lang="en">Note that r = 1 might be a necessary but not sufficient condition for a successful episode e.g., the agent might issue the return without explicit user confirmation, which violates the policy.</blockquote><p class="loc">τ-bench，§3，第 5 页</p></li>
+      <li data-key="tau-bias"><blockquote lang="en">There is also some element of implicit bias during the task curation process since we use the gpt-4-turbo FC agent to tune the user’s system prompt.</blockquote><p class="loc">τ-bench，§6，第 10 页</p></li>
+      <li data-key="swep-trivial"><blockquote lang="en">SWE-Bench Verified (Jimenez et al., 2024) includes a substantial proportion of relatively trivial problems (161 out of 500) that require only one- to two-line modifications.</blockquote><p class="loc">SWE-Bench Pro，§1，第 1 页</p></li>
+      <li data-key="swep-gpl"><blockquote lang="en">exclusively selecting repositories distributed under strong copyleft licenses (GPL) to construct a public set (11 repositories) and a held-out set (12 repositories), and (2) acquiring commercial codebases from real startups to capture enterprise-grade problems in a commercial set (18 repositories).</blockquote><p class="loc">SWE-Bench Pro，§1，第 2 页</p></li>
+      <li data-key="swep-size"><blockquote lang="en">On average, the reference solutions span 107.4 lines of code across 4.1 files.</blockquote><p class="loc">SWE-Bench Pro，§1，第 2 页</p></li>
+      <li data-key="swep-ablate"><blockquote lang="en">Without the requirements and interface, both models tested (GPT-5 and CLAUDE OPUS 4.1) show significantly degraded performance.</blockquote><p class="loc">SWE-Bench Pro，§6.2，第 7 页</p></li>
+      <li data-key="swep-tests"><blockquote lang="en">However, real software engineering tasks may have a variety of correct solutions, even if they do not pass the original tests outlined in the task.</blockquote><p class="loc">SWE-Bench Pro，§7.1，第 8 页</p></li>
+      <li data-key="mlr-gap"><blockquote lang="en">Moreover, there is also a need for empirical analysis to identify key failure modes—such as hallucinated results, lack of novelty, or methodological flaws — to quantify current limitations and inform future progress in research agents.</blockquote><p class="loc">MLR-Bench，§1，第 2 页</p></li>
+      <li data-key="mlr-ten"><blockquote lang="en">except in step (3) we manually select a subset of 10 (task, idea, proposal) triples based on their suitability for evaluating the experimentation agents, to keep the experiments manageable.</blockquote><p class="loc">MLR-Bench，§2，第 4 页</p></li>
+      <li data-key="mlr-80"><blockquote lang="en">in 8 out of 10 tasks conducted by Claude Code, the reported results were based on synthesized or placeholder data rather than actual execution, as pointed out by our MLR-Judge.</blockquote><p class="loc">MLR-Bench，§5，第 8 页</p></li>
+      <li data-key="mlr-shortcut"><blockquote lang="en">Instead of reporting these failures or halting the process, the agent tends to take shortcuts by generating synthetic results to fill in the gaps. Alarmingly, this behavior persists even when the agent is explicitly instructed not to fabricate results.</blockquote><p class="loc">MLR-Bench，§5，第 9 页</p></li>
+      <li data-key="mlr-judge"><blockquote lang="en">none of the five evaluation criteria show statistically significant differences at the 0.05 confidence level.</blockquote><p class="loc">MLR-Bench，§4，第 8 页</p></li>
+      <li data-key="trace-gaia"><blockquote lang="en">on the GAIA benchmark which is designed to test real-world assistant capabilities, top-performing agents have achieved scores exceeding 90%</blockquote><p class="loc">TRACE，§1，第 1 页</p></li>
+      <li data-key="trace-rule"><blockquote lang="en">In a dynamic web environment, such a minor change could break the task’s solvability entirely rather than increasing its reasoning complexity.</blockquote><p class="loc">TRACE，§1，第 2 页</p></li>
+      <li data-key="trace-replay"><blockquote lang="en">Under the assumption that all intermediate observations are reproducible and the reasoning chain is internally consistent, the task is deemed solvable and well-posed.</blockquote><p class="loc">TRACE，§4.3，第 7 页</p></li>
+      <li data-key="trace-blind"><blockquote lang="en">if it reliably solves the evolved task within resource limits, the item is flagged as insufficiently challenging and is rejected or sent back for re-evolution.</blockquote><p class="loc">TRACE，§4.3，第 7 页</p></li>
+      <li data-key="as-scale"><blockquote lang="en">As a result, manual inspection does not scale, and existing automated methods are not designed to systematically capture semantic and contextual issues arising from interactions among benchmark components</blockquote><p class="loc">AgentSuite，§1，第 1 页</p></li>
+      <li data-key="as-lenient"><blockquote lang="en">about 38% of τ -Bench tasks pass if the database remains unchanged, enabling a “do nothing” strategy</blockquote><p class="loc">AgentSuite，§2.2，第 3 页</p></li>
+      <li data-key="as-f1"><blockquote lang="en">Across benchmarks, the pipeline achieves consistently strong agreement with expert annotations, with F1 scores ranging from 0.791 to 0.874.</blockquote><p class="loc">AgentSuite，§4.2.1，第 6 页</p></li>
+      <li data-key="as-tau2"><blockquote lang="en">our pipeline recovers 11 out of the 15 objective issues identified through manual verification. In addition, it identifies 14 validated objective issues that fall within the same scope as the manual analysis but were not reported there.</blockquote><p class="loc">AgentSuite，§4.2.2，第 6 页</p></li>
+      <li data-key="as-rank"><blockquote lang="en">the cleaned benchmark has Kendall’s τ = 0.871 versus 0.960 under random removal</blockquote><p class="loc">AgentSuite，§4.6，第 8 页</p></li>
+      <li data-key="as-limit"><blockquote lang="en">they should be viewed as maintained benchmark artifacts rather than a guarantee that all remaining tasks are flawless.</blockquote><p class="loc">AgentSuite，§5，第 9 页</p></li>
+      <li data-key="tg-sparse"><blockquote lang="en">Such trajectory-level sparse signals make it difficult to identify which specific steps or actions in a multi-turn, interdependent sequence contributed to success or failure.</blockquote><p class="loc">Tree-GRPO，§1，第 2 页</p></li>
+      <li data-key="tg-15x"><blockquote lang="en">Under the same budget, our tree-search method can obtain around 1.5× samples (depending on the tree structure) compared to the chain-based method</blockquote><p class="loc">Tree-GRPO，§1，第 2 页</p></li>
+      <li data-key="tg-small"><blockquote lang="en">Remarkably, Tree-GRPO remains effective on Qwen2.5-1.5b, whereas chain-based methods struggle to stimulate multi-turn tool-use behavior.</blockquote><p class="loc">Tree-GRPO，§4.2，第 7 页</p></li>
+      <li data-key="aios-retry"><blockquote lang="en">prompts are converted to tensors and loaded into GPU memory until CUDA memory limits trigger exceptions, forcing tensor deallocation and requiring multiple retry attempts</blockquote><p class="loc">AIOS，§1，第 2 页</p></li>
+      <li data-key="aios-21"><blockquote lang="en">This improvement is attributed to the scheduling employed in the AIOS kernel, which prevents unnecessary trial-and-error attempts by avoiding prompts that cannot be loaded onto the GPU for execution.</blockquote><p class="loc">AIOS，§4.3，第 8 页</p></li>
+      <li data-key="sg-discard"><blockquote lang="en">In existing inference engines, the KV cache of a request is discarded after processing is completed, preventing the KV cache from being reused across multiple calls and significantly slowing down the execution.</blockquote><p class="loc">SGLang，§1，第 2 页</p></li>
+      <li data-key="sg-starve"><blockquote lang="en">While greedy cache-aware scheduling can achieve high throughput, it can lead to starvation.</blockquote><p class="loc">SGLang，§3，第 6 页</p></li>
+      <li data-key="sg-hit"><blockquote lang="en">On these benchmarks, the cache hit rate ranges from 50% to 99%. Fig. 13 (Appendix) lists the achieved and optimal cache hit rates for all of them, showing that our cache-aware scheduling approaches 96% of the optimal hit rate on average.</blockquote><p class="loc">SGLang，§6.2，第 8 页</p></li>
+      <li data-key="mc-local"><blockquote lang="en">the capacity of local DRAM supports only up to 50% of the theoretical cache hit rate, making the design of a global cache essential.</blockquote><p class="loc">Mooncake，§2.2，第 4 页</p></li>
+      <li data-key="mc-6gb"><blockquote lang="en">when running LLaMA3-70B on a machine with 8×A800 GPUs and assuming a prefix length of 8192, Equation 2 yields a minimum required B of 6 GB/s.</blockquote><p class="loc">Mooncake，§2.2，第 5 页</p></li>
+      <li data-key="mc-global"><blockquote lang="en">the cache hit rate is up to 2.36× higher than that of the local cache, resulting in up to 48% savings in prefill computation time.</blockquote><p class="loc">Mooncake，§1，第 4 页</p></li>
+      <li data-key="js-types"><blockquote lang="en">requests fall into three dominant patterns (§2.1): (i) Latency-sensitive requests: prioritize per-token latency metrics such as time-to-first-token (TTFT) and time-between-tokens (TBT)</blockquote><p class="loc">JITServe，§1，第 2 页</p></li>
+      <li data-key="js-qrf"><blockquote lang="en">the Request Analyzer augments the prompt with newly generated tokens and periodically re-invokes QRF (e.g., every 50 tokens) to refine the upper bound, thereby progressively reducing conservatism.</blockquote><p class="loc">JITServe，§4.1，第 6 页</p></li>
+      <li data-key="js-oracle"><blockquote lang="en">JITServe achieves performance within 3–9% of the oracle despite relying on imperfect predictions.</blockquote><p class="loc">JITServe，§6.2，第 11 页</p></li>
+      <li data-key="sgn-naive"><blockquote lang="en">revealing that “naively-generated workloads are misleadingly easier to serve than real historial ones”</blockquote><p class="loc">ServeGen，§1，第 2 页</p></li>
+      <li data-key="sgn-client"><blockquote lang="en">The top clients and their rate fluctuations largely explain the shifting workload patterns.</blockquote><p class="loc">ServeGen，§3.3，第 7 页</p></li>
+      <li data-key="sgn-prov"><blockquote lang="en">while NAIVE results in only 12 instances (50% under-provisioning).</blockquote><p class="loc">ServeGen，§6.3，第 12 页</p></li>
+      <li data-key="sgn-plugin"><blockquote lang="en">We leave characterizing LLM serving with plugin calls as an important area for future work.</blockquote><p class="loc">ServeGen，§7，第 13 页</p></li>
+      <li data-key="vd-cascade"><blockquote lang="en">Thus small errors in individual batch predictions cascade over time and lead to aggregate errors.</blockquote><p class="loc">Vidur，§3，第 4 页</p></li>
+      <li data-key="vd-capacity"><blockquote lang="en">Note that, as we approach capacity point, any small deltas in prediction can lead to significant blow up of the errors.</blockquote><p class="loc">Vidur，§7.2，第 9 页</p></li>
+      <li data-key="vd-95"><blockquote lang="en">for LLaMA2-7B, where we have slightly higher error due to CPU overheads, the errors cascade and we see up to 12.65% maximum error.</blockquote><p class="loc">Vidur，附录 A.1，第 15 页</p></li>
+      <li data-key="vd-cost"><blockquote lang="en">This complete exploration costs only 125 US dollars in simulation as opposed to actual execution which would have required 1.14 million dollars.</blockquote><p class="loc">Vidur，§7.3，第 10 页</p></li>
+    </ol>
+  </details>
+
+</div>
+</article>
