@@ -19,11 +19,13 @@
         <button class="zoom" type="button"><img src="figures/cachescout/fig1.png" alt="(a) 多智能体旅行规划；(b) 反复调用各智能体时 KV 缓存的变化" loading="lazy"></button>
       </figure>
       <div>
-        <p>多智能体系统中，一个规划者把用户请求拆给若干专门的智能体。例子：规划日本旅行，规划者先让航班智能体查航班，再让酒店智能体推荐住处，再让餐厅智能体找餐馆。每个智能体每次被调用，开头都是相同的固定内容：角色说明、工具定义、示例，具体任务接在后面。这段内容的 KV 缓存可以在每次调用该智能体时复用，跨用户会话也可以。</p>
+        <p>Fig. 1 用一个旅行规划的例子说明问题。(a) 是执行过程：用户请规划一次日本旅行，规划者（Planner）依次调用航班、酒店、餐厅三个专门的智能体，每个智能体的提示由两部分组成，前面是固定内容（例如 system="hotel expert"，加上 search_hotel、reviews 等工具定义），后面才是这次的具体请求。(b) 画的是反复调用这几个智能体时 GPU 上 KV 缓存的变化。</p>
+        <p>多智能体系统中，一个规划者把用户请求拆给若干专门的智能体。例子中，规划日本旅行，规划者先让航班智能体查航班，再让酒店智能体推荐住处，再让餐厅智能体找餐馆。每个智能体每次被调用，开头都是相同的固定内容：角色说明、工具定义、示例，具体任务接在后面。这段内容的 KV 缓存可以在每次调用该智能体时复用，跨用户会话也可以。</p>
         <figure class="fig">
           <button class="zoom" type="button"><img src="figures/cachescout/fig2.png" alt="四种多智能体负载中固定前缀占全部提示 token 的比例" loading="lazy"></button>
         </figure>
-        <p>Fig. 2：在论文评估的四种负载中，这类固定内容占全部提示 token 的 53% 到 62%[[fixed]]。</p>
+        <p>Fig. 2 统计的是后面实验用的四种多智能体负载，任务分别来自 GSM8K（数学题）、MT-Bench（多轮对话）、GAIA（需要上网和用工具的推理）和 SWE-bench（修代码），都跑在论文搭建的六智能体框架上。每根条把全部提示 token 分成两段：反复出现的固定内容（系统提示、工具定义、技能和示例）和每个会话自己的内容。</p>
+        <p>固定内容占全部提示 token 的 53% 到 62%[[fixed]]，SWE-bench 最高。这部分是 KV 缓存复用的主要机会。</p>
       </div>
     </div>
   </section>
@@ -40,7 +42,7 @@
 
   <div class="band">
     <h2>测量：哪些块值得保护，下一个智能体能不能预测，能不能事先写死</h2>
-    <p>四种负载（GSM8K、MT-Bench、GAIA、SWE-bench）都跑在一个六智能体的 supervisor 框架上，用 AutoGen 的 SelectorGroupChat 由模型决定下一个智能体。</p>
+    <p>这一节的测量回答三个问题，用的负载和后面的实验相同：GSM8K、MT-Bench、GAIA、SWE-bench 四类任务，都跑在论文搭建的六智能体 supervisor 框架上，智能体带工具，下一个由哪个智能体执行由 AutoGen 的 SelectorGroupChat 让模型在运行时决定。</p>
   </div>
 
   <section class="panel s6">
@@ -48,6 +50,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig3.png" alt="(a) 各类 KV 块平均被复用的次数；(b) anchor 占提示的比例随轮次变化" loading="lazy"></button>
     </figure>
+    <p>Fig. 3 回答哪些 KV 块值得保护。(a) 把四种负载缓存下来的 KV 块分成两类，anchor 块（智能体的固定前缀）和会话历史块（某个会话自己的对话内容），统计每个块在之后平均被复用了多少次。(b) 看 anchor 占每个提示的比例 φ，即系统提示、工具定义、技能和少样本示例的 token 数除以提示总 token 数，横轴是会话的轮次，取一个中位长度的会话的前半段。</p>
     <p>(a) anchor 块平均被复用 49 到 173 次[[reuse]]，因为一个智能体的每次调用都会访问它，而且跨会话；属于单个会话历史的块只被复用 12 到 15 次，相差 4 到 13 倍。(b) 复用次数多还不够，还要看它占多大比例：随着会话历史累积，anchor 的占比逐渐下降，但到第十几轮仍占每个提示的 43% 到 60%[[anchor-ratio]]。两者合起来说明，保护 anchor 块收益最大。</p>
   </section>
 
@@ -56,11 +59,13 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig4.png" alt="(a) 四种协作方式下的可预测性 R；(b) 在线转移计数的预测准确率随观察次数变化" loading="lazy"></button>
     </figure>
-    <p>可预测性 R 定义为：知道当前智能体后，下一个智能体的不确定性（熵）减少的比例，0 表示无关，1 表示完全确定。(a) 固定流水线 R 为 1.0，有主持人的辩论 0.78，由模型选下一个的 SelectorGroupChat 0.57，随机选 0.12。(b) 只用一个在线的转移计数（预测为当前智能体最常见的后继），观察 50 次调度后 top-1 准确率达到 76% 到 86%，不需要离线训练[[top1]]。</p>
+    <p>Fig. 4 回答下一个智能体能不能预测。可预测性 R 定义为：知道当前智能体后，下一个智能体的不确定性（熵）减少的比例，0 表示无关，1 表示完全确定。(a) 在六智能体框架上换四种协作方式，各算一个 R：固定流水线（Pipeline，按固定顺序轮流）、有裁判的辩论（Debate）、由模型选下一个的 SelectorGroupChat（Selector，也就是实验里实际用的方式），以及随机选（Random）。(b) 把四种负载的执行轨迹按时间顺序回放给一个在线的一阶转移计数器，它总是预测当前智能体最常见的后继，横轴是已经观察到的调度次数，纵轴是预测下一个智能体的 top-1 准确率。</p>
+    <p>(a) 固定流水线 R 为 1.0，有主持人的辩论 0.78，由模型选下一个的 SelectorGroupChat 0.57，随机选 0.12。(b) 只用一个在线的转移计数（预测为当前智能体最常见的后继），观察 50 次调度后 top-1 准确率达到 76% 到 86%，不需要离线训练[[top1]]。</p>
     <figure class="fig">
-      <button class="zoom" type="button"><img src="figures/cachescout/fig5.png" alt="同一六智能体框架在四种协作方式下学到的转移矩阵" loading="lazy"></button>
+      <button class="zoom" type="button"><img src="figures/cachescout/fig5.png" alt="六智能体框架在四种协作方式下学到的转移矩阵" loading="lazy"></button>
     </figure>
-    <p>Fig. 5：相同的六个智能体，换一种协作方式，转移矩阵完全不同。执行结构由运行时的协作行为决定，不由框架决定，所以无法离线写死，只能在线学习[[online]]。</p>
+    <p>Fig. 5 是 Fig. 4(a) 那四种协作方式学到的转移矩阵 P(下一个 | 当前)：行是当前智能体，列是下一个智能体，格子里是转移概率，颜色越深概率越大。六个智能体用字母 P、A、C、T、R、D 表示，论文正文只提到其中有 Coder 和 Reviewer，没有逐一列出全称。流水线是一条固定的链，每行只有一个 1；辩论集中在 Coder 和 Reviewer 之间来回，由裁判定期裁决；Selector 的概率集中在少数几条边上，例如 T 之后 0.91 回到 P；随机选几乎均匀分布。</p>
+    <p>相同的六个智能体，换一种协作方式，转移矩阵完全不同。执行结构由运行时的协作行为决定，不由框架决定，所以无法离线写死，只能在线学习[[online]]。</p>
   </section>
 
   <div class="band">
@@ -73,6 +78,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig6.png" alt="CacheScout 架构：转移学习器、存活评分器、后台预取协调器" loading="lazy"></button>
     </figure>
+    <p>Fig. 6 是架构图。CacheScout 夹在上方的智能体框架和下方的 vLLM 之间，图中带编号的箭头是一次调用经过的步骤：请求到来时由前缀块哈希识别出是哪个智能体并更新转移计数（①），引擎要淘汰块时按存活分数排序（②④），空闲时为预测的下一个智能体发预热请求（③⑤）。Fig. 7 画的是存活分数怎么算：先把学到的转移图里置信度低的边剪掉，再从当前智能体出发做广度优先搜索，按跳数给每个智能体打分。</p>
     <dl class="defs">
       <dt>① 转移学习器</dt><dd>把智能体的执行看作一阶马尔可夫链。每个请求用前缀块的哈希作为指纹识别出是哪个智能体，指纹变化就意味着一次调度，相应的转移计数加一[[fingerprint]]，转移概率就是归一化后的计数（加一个小的平滑项）。每次只改一个计数，状态有界，不需要事先知道工作流，也不需要框架配合。只学习“下一个”，因为淘汰决策只需要预见下一步。</dd>
       <dt>②④ 存活评分器</dt><dd>理想的分数是“某个 anchor 在接下来 K 步内被用到的概率”，精确计算要枚举所有路径，太贵。近似做法（Fig. 7）：只保留高置信度的转移，构成稀疏的执行图，从当前智能体做一次广度优先搜索，得到到每个智能体的最少跳数；跳数越少，分数越高[[hop]]。每个块继承它所属 anchor 的分数，再乘以最近访问的衰减项，再乘以块的 token 数（重算代价），分数最低的先淘汰。执行可预测时存活分数起主要作用；不可预测时存活分数趋于平坦，最近访问项起主导，策略自然退化为 LRU[[lru]]。</dd>
@@ -94,6 +100,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig8.png" alt="四种负载下三个系统的 KV 缓存命中率与平均 TTFT" loading="lazy"></button>
     </figure>
+    <p>Fig. 8 是主实验：在一台 RTX PRO 6000（96 GB）服务器上用 Llama-3.1-8B-Instruct，跑 GSM8K、MT-Bench、GAIA、SWE-bench 四种负载，比较 vLLM（前缀缓存加 LRU 淘汰）、Continuum（工具调用前后按 TTL 0.3 秒保留 KV）和 CacheScout。三个系统的 vLLM 配置、显存预算、解码参数和前缀缓存设置都相同。(a) 是 KV 缓存命中率，即命中缓存的提示 token 占全部提示 token 的比例；(b) 是平均首 token 时间（TTFT）。Fig. 9 用相同的运行，画四种负载上 TTFT 的累积分布，横轴取对数。</p>
     <p>CacheScout 的命中率在四种负载上都最高，比 vLLM 高 10 到 18 个百分点，达到 81% 到 85%；平均 TTFT 降低 18% 到 45%。Fig. 9 的 CDF 显示改善遍及整个分布：中位数 TTFT 降低 14% 到 52%，例如 GAIA 从 231 ms 到 114 ms[[median]]；三种负载的 P99 降低 21% 到 52%。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig9.png" alt="四种负载的 TTFT 累积分布" loading="lazy"></button>
@@ -106,7 +113,8 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig10.png" alt="四种负载下的平均单轮延迟与峰值吞吐" loading="lazy"></button>
     </figure>
-    <p>平均单轮延迟降低 29% 到 38%，峰值吞吐高 19% 到 57%。Fig. 11 把会话到达率从低扫到高：vLLM 的 KV 缓存饱和后吞吐就不再增长，CacheScout 推迟了饱和；在相同的平均延迟预算下，能承受的到达率是 vLLM 的 1.7 到 12 倍、Continuum 的 4.2 到 16 倍[[load]]。</p>
+    <p>Fig. 10 沿用主实验的设置，(a) 是平均单轮延迟，一轮指一次智能体调用，包括 prefill 和 decode；(b) 是峰值吞吐，即每秒完成的轮数。Fig. 11 再把会话到达率从每秒 0.2 个扫到 50 个，四行是四种负载，四列分别是平均、P90、P99 单轮延迟和吞吐，横轴都是会话到达率，取对数。</p>
+    <p>平均单轮延迟降低 29% 到 38%，峰值吞吐高 19% 到 57%。Fig. 11 中，vLLM 的 KV 缓存饱和后吞吐就不再增长，CacheScout 推迟了饱和；在相同的平均延迟预算下，能承受的到达率是 vLLM 的 1.7 到 12 倍、Continuum 的 4.2 到 16 倍[[load]]。整个扫描范围内 CacheScout 的命中率保持在 86% 到 87%，vLLM 在 65% 到 68%。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig11.png" alt="平均、P90、P99 单轮延迟和吞吐随会话到达率变化" loading="lazy"></button>
     </figure>
@@ -117,6 +125,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig12.png" alt="vLLM、只用预测淘汰、预测淘汰加预取三种配置的命中率、TTFT、单轮延迟、吞吐" loading="lazy"></button>
     </figure>
+    <p>Fig. 12 拆开两个机制的贡献，比较三种配置：原版 vLLM、只开预测淘汰（Eviction only）、预测淘汰加后台预取（Eviction + prefetch，即完整的 CacheScout），四幅小图分别是命中率、平均 TTFT、平均单轮延迟和峰值吞吐，四种负载都跑。论文正文还提到只开预取的结果，但没有画在图里。</p>
     <p>只开预测淘汰，命中率就比 vLLM 高 18 到 22 个百分点，单独开预取最多只多 1 个百分点[[evict-only]]。单独预取几乎没用：多数轮次没有可预热的前缀，而且预热出来的块在预测的智能体到来之前就被 LRU 淘汰了。两者合用时，预热的 anchor 被淘汰策略保护下来，在 GAIA 上单轮延迟比只用淘汰再降 28%（347 ms 到 251 ms）[[prefetch]]。</p>
     <p class="mine"><b>本页说明：</b>两处数字对不上。消融中只用淘汰就比 vLLM 高 18 到 22 个百分点，而主结果中完整系统只高 10 到 18 个百分点；Fig. 12 与 Fig. 8 中相同指标的绝对值也不同（例如 vLLM 在 GSM8K 上的平均 TTFT，一处约 180 ms，一处约 280 ms）。两组实验的设置应当不同，论文没有说明差别。</p>
   </section>
@@ -126,11 +135,13 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig13.png" alt="Qwen3-235B-A22B 上的命中率，以及 SWE-bench 上 TTFT、单轮延迟、吞吐随到达率变化" loading="lazy"></button>
     </figure>
-    <p><b>大模型。</b>Qwen3-235B-A22B 上命中率高 7 到 13 个百分点。SWE-bench 提示长，prefill 代价高，到达率从每秒 0.2 到 2.0 个会话，平均 TTFT 都降低 33% 到 54%；vLLM 的吞吐在每秒 5.2 轮饱和，CacheScout 到 7.2 轮，高 37%[[big]]。</p>
+    <p><b>大模型。</b>Fig. 13 换成 Qwen3-235B-A22B-FP8，这是一个 2350 亿参数的混合专家模型，在 4 张 H200 上做张量并行，只和原版 vLLM 比较，因为 Continuum 的 vLLM 分支不支持这个模型。(a) 是四种负载的命中率；(b)(c)(d) 只用 SWE-bench，横轴是会话到达率（每秒 0.2 到 2.0 个），纵轴分别是平均 TTFT、平均单轮延迟和吞吐。</p>
+    <p>Qwen3-235B-A22B 上命中率高 7 到 13 个百分点。SWE-bench 提示长，prefill 代价高，到达率从每秒 0.2 到 2.0 个会话，平均 TTFT 都降低 33% 到 54%；vLLM 的吞吐在每秒 5.2 轮饱和，CacheScout 到 7.2 轮，高 37%[[big]]。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig14.png" alt="(a) 不同 GPU 缓存预算下的命中率；(b) 开关预取门控时的单轮延迟" loading="lazy"></button>
     </figure>
-    <p><b>缓存容量。</b>(a) 缓存预算从 100 块到 200 块，CacheScout 的命中率保持在 86% 到 87%，vLLM 从 64.4% 升到 76.6%[[budget]]，要多得多的显存才能接近。低于 93 块时放不下最大的请求，不在考察范围内[[93]]。(b) 关掉按可预测性开关预取的门控，小缓存下单轮延迟最多高 22%，因为无用的预热与正常推理争抢 GPU[[gate]]。运行时的状态在 24 个智能体时也不到 25 KB，每次记录约 1 µs，计算存活分数不到 6 µs。</p>
+    <p><b>缓存容量。</b>Fig. 14 回到 Llama-3.1-8B，人为限制 GPU 上 KV 缓存的块数，从 100 块到 200 块，论文没有写明这里跑的是哪种负载。(a) 比较 vLLM 和 CacheScout 的命中率；(b) 比较 CacheScout 打开和关掉“按可预测性决定是否预取”的门控时的单轮延迟。</p>
+    <p>(a) 缓存预算从 100 块到 200 块，CacheScout 的命中率保持在 86% 到 87%，vLLM 从 64.4% 升到 76.6%[[budget]]，要多得多的显存才能接近。低于 93 块时放不下最大的请求，不在考察范围内[[93]]。(b) 关掉按可预测性开关预取的门控，小缓存下单轮延迟最多高 22%，因为无用的预热与正常推理争抢 GPU[[gate]]。运行时的状态在 24 个智能体时也不到 25 KB，每次记录约 1 µs，计算存活分数不到 6 µs。</p>
     <p class="mine"><b>本页说明：</b>主实验没有写明 KV 缓存的容量。敏感度实验的 100 到 200 块，按 vLLM 默认每块 16 token 计算只有约 1600 到 3200 token，仅能容纳一两个请求，是刻意制造的缓存压力；在 96 GB 显卡上跑 8B 模型的正常配置下，缓存要大几个数量级，淘汰没有这么频繁，收益会小得多。</p>
   </section>
 

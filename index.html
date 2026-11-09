@@ -4170,7 +4170,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig1.png" alt="四种智能体程序的执行流程：聊天、ReAct、Mixture of Agents、蒙特卡洛树搜索" loading="lazy"></button>
     </figure>
-    <p>论文把智能体应用称为 agentic program：由一个或多个智能体的模型调用和外部中断（工具调用、代码执行、人的输入）组成的有向无环图。(a)(b) 是单线程程序，模型调用和中断交替，长度取决于用户输入和控制流；(c)(d) 是多线程程序，线程不断分叉和合并。图的形状只在运行时才显现，无法事先知道或预测<button class="cite" data-q="1">1</button>。</p>
+    <p>Fig. 1 画了四种智能体程序的执行流程，蓝框是一次模型调用，橙色圆角框是外部中断，即人的输入、工具调用或执行代码。(a) 聊天机器人：模型回复和用户输入轮流出现，直到用户结束。(b) ReAct 智能体：模型推理并决定调用哪个工具，工具返回后再交给模型，循环到模型决定结束。(c) Mixture of Agents，用于事实核查和摘要：先调用工具取材料，再并行交给多个 Map Agent 处理，由一个 Reduce Agent 汇总，可以重复多轮。(d) 蒙特卡洛树搜索：多个 Actor Agent 并行提出动作并调用工具，Critic Agent 评估，Reflect Agent 反思，执行 Python 后再展开下一层。</p>
+    <p>论文把这类应用统称为 agentic program：由一个或多个智能体的模型调用和外部中断组成的有向无环图。(a)(b) 是单线程程序，长度取决于用户输入，调用和中断的顺序取决于控制流；(c)(d) 是多线程程序，线程不断分叉和合并。图的形状只在运行时才显现，无法事先知道或预测<button class="cite" data-q="1">1</button>。</p>
   </section>
 
   <section class="panel s7">
@@ -4178,12 +4179,13 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig2.png" alt="四个程序在 batch 大小为 2 的引擎上，FCFS、MLFQ、PLAS 三种调度的甘特图" loading="lazy"></button>
     </figure>
-    <p>现有推理引擎只看单个调用，忽略了调用之间、调用与程序之间的依赖<button class="cite" data-q="2">2</button>。例子：(a) 四个程序同时到达，A、B 长，C、D 短，引擎一次跑两个调用。(b) 先来先服务（FCFS，vLLM 的默认策略）：A、B 的长调用先占住引擎，C、D 要等到第 3、4 步才开始，这是调用级的队头阻塞，总等待 18 个单位。(c) 多级反馈队列（MLFQ）可以抢占长调用，让 C、D 先跑；但新到的调用都进最高优先级队列，A、B 后续的调用不断插到 D 前面，这是程序级的队头阻塞<button class="cite" data-q="3">3</button>，总等待仍是 18。(d) Agentix 的 PLAS 按程序已经消耗的服务时间排序，A、B 的后续调用排到后面，总等待降到 12。</p>
+    <p>Fig. 2 是一个手工构造的例子，用来说明调度策略的差别。(a) 的表列出四个在 0 时刻同时到达的程序：A 有 4 个调用，各需 4、3、1、1 步 decode；B 有 3 个调用，各需 3、3、4 步；C 有 2 个调用，各需 1、2 步；D 只有 1 个调用，需 4 步。一个程序内部的调用有先后依赖，前一个完成才能发出下一个。引擎的 batch 上限是 2，即同时只能跑两个调用。(b)(c)(d) 是三种调度下的甘特图：纵轴是两个 batch 槽位，横轴是 decode 步，每个色块是一次调用占用槽位的时段，统计的是所有调用排队等待的总步数。</p>
+    <p>现有推理引擎只看单个调用，忽略了调用之间、调用与程序之间的依赖<button class="cite" data-q="2">2</button>。(b) 先来先服务（FCFS，vLLM 的默认策略）：A、B 的长调用先占住引擎，C、D 要等到第 3、4 步才开始，这是调用级的队头阻塞，总等待 18 个单位。(c) 多级反馈队列（MLFQ）可以抢占长调用，让 C、D 先跑；但新到的调用都进最高优先级队列，A、B 后续的调用不断插到 D 前面，这是程序级的队头阻塞<button class="cite" data-q="3">3</button>，总等待仍是 18。(d) Agentix 的 PLAS 按程序已经消耗的服务时间排序，A、B 的后续调用排到后面，总等待降到 12。</p>
   </section>
 
   <div class="band">
     <h2>动机实验：时间花在等待上，程序内部的缓存可以复用</h2>
-    <p>单线程程序的端到端延迟由三部分组成：调用在引擎里排队的等待时间、调用实际计算的执行时间、等外部中断的时间。第三部分与推理服务无关，论文只处理前两部分<button class="cite" data-q="4">4</button>。以下实验用 LLaMA-3.1-8B 和一张 A100。</p>
+    <p>单线程程序的端到端延迟由三部分组成：调用在引擎里排队的等待时间、调用实际计算的执行时间、等外部中断的时间。第三部分与推理服务无关，论文只处理前两部分<button class="cite" data-q="4">4</button>。这一节的四张图是动机测量，负载取自后面实验用的三类程序：聊天（ShareGPT 的整段对话）、ReAct（BFCL 的工具调用任务）、蒙特卡洛树搜索（LATS 在 HotpotQA 上的搜索）。只有 Fig. 4 写明了模型和硬件：LLaMA-3.1-8B，一张 A100-80GB。</p>
   </div>
 
   <section class="panel s6">
@@ -4193,14 +4195,16 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/agentix/fig5.png" alt="聊天、ReAct、MCTS 程序在不同负载下执行时间和等待时间的占比" loading="lazy"></button>
       </figure>
-      <p>聊天、ReAct、MCTS 三类程序在负载升高后，大部分时间都在等待<button class="cite" data-q="5">5</button>，等待多少还取决于负载类型。</p>
+      <p>Fig. 5 分别跑聊天、ReAct、蒙特卡洛树搜索三类程序，系统负载设为 0.5 和 0.9 两档，把每个程序的时间拆成两部分：调用在引擎上实际计算的执行时间（蓝），和调用在引擎队列里排队的等待时间（橙），画出两者的占比。论文没有写明这里用的是哪种调度策略，以及负载是按什么基准换算的。</p>
+      <p>负载 0.5 时，聊天程序的等待占 56.6%，蒙特卡洛树搜索占 63.5%，ReAct 只有 38.6%；负载到 0.9 时，三类程序的等待都升到八成以上，分别是 80.4%、87.0%、91.3%。负载一上来，程序大部分时间都在等待<button class="cite" data-q="5">5</button>，等待多少还取决于负载类型。</p>
     </div>
     <div class="fb">
       <h3><span class="fn">Fig. 4</span>减少等待会提高吞吐</h3>
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/agentix/fig4.png" alt="一小时稳态中引擎内的调用数：vLLM 与 Agentix" loading="lazy"></button>
       </figure>
-      <p>调用完成得快，程序就能更早发出下一个调用，引擎里同时存在的调用更多，组批的机会也更多。一小时的稳态中，Agentix 比 vLLM 平均多容纳 10 个并发调用<button class="cite" data-q="6">6</button>。</p>
+      <p>Fig. 4 用 LLaMA-3.1-8B 在一张 A100-80GB 上回放一小时的聊天轨迹，每个程序是 ShareGPT 中的一整段对话。横轴是时间，纵轴是引擎里同时存在的模型调用数，比较 vLLM 默认的先来先服务和 Agentix 两条曲线。</p>
+      <p>调用完成得快，程序就能更早发出下一个调用，引擎里同时存在的调用更多，组批的机会也更多。稳态中 Agentix 比 vLLM 平均多容纳 10 个并发调用<button class="cite" data-q="6">6</button>，减少等待本身就能提高吞吐。</p>
     </div>
   </section>
 
@@ -4211,14 +4215,16 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/agentix/fig6.png" alt="聊天和 MCTS 中，按输出长度和按调用数分组的等待与执行时间之比" loading="lazy"></button>
       </figure>
-      <p>(a)(c) 按调用的输出长度分组：FCFS 下短调用的比值最高，即调用级阻塞；MLFQ 能压低短调用的比值。(b)(d) 按程序的调用数分组：FCFS 和 MLFQ 下调用少的程序比值都高，即短程序等得最久，MLFQ 没有解决程序级阻塞。</p>
+      <p>Fig. 6 用聊天和蒙特卡洛树搜索两类程序，分别在先来先服务（FCFS）、多级反馈队列（MLFQ）和 Agentix 三种调度下运行，纵轴都是等待时间除以执行时间的比值，比值越高说明相对自身的计算量等得越久。(a)(c) 以单个调用为单位，横轴是这个调用的 decode 步数，即输出有多长；(b)(d) 以整个程序为单位，横轴是程序包含的调用数，即程序有多长。</p>
+      <p>按调用看，FCFS 下输出短的调用比值最高，长调用堵住了短调用，这是调用级的队头阻塞；MLFQ 能抢占长调用，压低了短调用的比值。按程序看，FCFS 和 MLFQ 下调用少的程序比值都高，短程序等得最久，MLFQ 没有解决程序级的阻塞，因为长程序新发出的调用都会进入最高优先级。Agentix 的曲线在四幅图里都最低。</p>
     </div>
     <div class="fb">
       <h3><span class="fn">Fig. 7</span>程序内与程序间的前缀命中率</h3>
       <figure class="fig">
-        <button class="zoom" type="button"><img src="figures/agentix/fig7.png" alt="按输入长度的前缀缓存命中率：同一程序内与不同程序之间" loading="lazy"></button>
+        <button class="zoom" type="button"><img src="figures/agentix/fig7.png" alt="按输入长度的前缀缓存命中率：程序内与不同程序之间" loading="lazy"></button>
       </figure>
-      <p>一个程序内部，各种输入长度下命中率都在 90% 以上<button class="cite" data-q="7">7</button>；不同程序之间，命中率随输入变长迅速下降，因为它们只共享系统提示。这一点决定了后面多引擎时怎样分配调用。</p>
+      <p>Fig. 7 测的是前缀缓存能复用多少。命中率定义为一个新调用的输入中，已经在引擎 KV 缓存里的 token 所占的比例。(a) 是单线程的聊天程序，(b) 是多线程的蒙特卡洛树搜索，横轴是调用的输入长度，两条曲线分别只拿本程序之前的调用、或只拿其他程序的调用作为可复用的缓存来源。</p>
+      <p>程序内部，各种输入长度下命中率都在 90% 以上<button class="cite" data-q="7">7</button>；不同程序之间，命中率随输入变长按指数下降，因为它们只共享系统提示。这一点决定了后面多引擎时怎样分配调用：一个程序的调用最好留在它已经在用的引擎上。</p>
     </div>
   </section>
 
@@ -4232,6 +4238,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig8.png" alt="Agentix 架构：前端会话、进程表、负载均衡器、引擎内的调度器与内存管理" loading="lazy"></button>
     </figure>
+    <p>Fig. 8 是 Agentix 的架构。上方是在用户本地运行的程序（蒙特卡洛树搜索、ReAct、网页智能体等），每个程序开启一个会话，把模型调用发给后端；中间是全局进程表，每行以程序编号（PID）为键，记录服务时间和线程信息；进程表下面是负载均衡器，把调用分到某个推理引擎；引擎内部有调度器（按优先级函数排序）、内存管理器（管理 KV 缓存的交换）和模型执行器。</p>
     <p>普通推理 API 是无状态的。Agentix 让程序在用户本地运行，导入它的库后自动开启一个会话，之后的每次模型调用都带上会话编号，程序结束时关闭会话。对开发者来说接口看起来仍是无状态的。</p>
     <p>服务端维护一张进程表，每个程序一行：已获得的服务时间、累计等待时间、所在引擎、每个活跃调用（线程）的到达、等待和服务时间，以及最近一次调用到达和完成的时间（用来发现停滞的程序和长时间的外部中断）。调度器和负载均衡器都读这张表。</p>
   </section>
@@ -4244,7 +4251,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <p><b>为什么用已用服务时间。</b>最短作业优先能使平均响应时间最小，但需要知道程序还要跑多久，这里做不到。不知道作业长度时的常用替代是最少已获服务优先（LAS）：已经跑了很久的，多半还要跑很久，先让新来的跑。</p>
     <dl class="defs">
       <dt>PLAS（单线程）</dt><dd>一个调用的优先级等于它所属程序之前所有已完成调用的运行时间之和，数值越大优先级越低。调用完成时更新进程表里的总服务时间。</dd>
-      <dt>ATLAS（多线程）</dt><dd>多线程程序的完成时间由critical path（最长的一串相互依赖的调用）决定。图中例子：不考虑critical path时完成时间是 14 个单位，考虑时是 11。ATLAS 用“已观察到的最长critical path的执行时间”作为程序的服务时间<button class="cite" data-q="9">9</button>。每个程序只存这一个数：新调用以它作为优先级，调用完成时若自己这条路径更长就更新它，不需要记录调用之间的依赖<button class="cite" data-q="10">10</button>。一个程序的并行调用拿到相同的优先级，会被一起调度，不会有某个线程被落下。</dd>
+      <dt>ATLAS（多线程）</dt><dd>多线程程序的完成时间由critical path（最长的一串相互依赖的调用）决定。Fig. 9 左边是一个由 5 个调用组成的 DAG，标出了其中的critical path；右边是把这些调用放到引擎上的两种排法，横轴是时间：不按critical path排时完成时间是 14 个单位，优先排critical path上的调用时是 11。ATLAS 用“已观察到的最长critical path的执行时间”作为程序的服务时间<button class="cite" data-q="9">9</button>。每个程序只存这一个数：新调用以它作为优先级，调用完成时若自己这条路径更长就更新它，不需要记录调用之间的依赖<button class="cite" data-q="10">10</button>。一个程序的并行调用拿到相同的优先级，会被一起调度，不会有某个线程被落下。</dd>
     </dl>
   </section>
 
@@ -4285,7 +4292,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <tr><td>Mixed</td><td class="wrap">三者等比例混合</td><td class="r"></td><td class="wrap"></td></tr>
       </tbody>
     </table></div>
-    <p>按程序（而不是按调用）随机抽样，到达时间用泊松过程生成<button class="cite" data-q="16">16</button>。指标是程序级的每 token 延迟：程序的总响应时间除以 token 数<button class="cite" data-q="17">17</button>，多线程程序用critical path的响应时间。对照组：vLLM v0.6.1（FCFS）；vLLM-opt（打开分块 prefill、前缀缓存和多步调度）；在 vLLM-opt 上加 MLFQ 抢占。batch 上限都相同。</p>
+    <p>Fig. 11 是三种负载的统计：(a)(b)(c) 分别是 ShareGPT、BFCL、LATS 每次调用的输入（prefill）和输出（decode）token 数的分布，(d) 是三种负载里每个程序包含多少次调用的分布。ShareGPT 每个程序最多 80 次调用，BFCL 最多 70 次，都是长尾分布。</p>
+    <p>实验时按程序（而不是按调用）随机抽样，到达时间用泊松过程生成<button class="cite" data-q="16">16</button>。指标是程序级的每 token 延迟：程序的总响应时间除以 token 数<button class="cite" data-q="17">17</button>，多线程程序用critical path的响应时间。对照组：vLLM v0.6.1（FCFS）；vLLM-opt（打开分块 prefill、前缀缓存和多步调度）；在 vLLM-opt 上加 MLFQ 抢占。batch 上限都相同。</p>
   </section>
 
   <section class="panel s6">
@@ -4293,7 +4301,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig12.png" alt="四种负载、三种模型下，各系统的程序级延迟随到达率的变化" loading="lazy"></button>
     </figure>
-    <p>行是负载，列是模型，横轴是程序到达率，纵轴是延迟。曲线越靠右，说明在相同延迟下能承受的到达率越高。vLLM 没有前缀缓存，最早上翘。ShareGPT 和 BFCL 上，FCFS 随到达率升高出现严重的队头阻塞；MLFQ 解决了调用级阻塞，吞吐是 vLLM-opt 的 1.5 倍；Agentix 同时处理两级阻塞，在高负载下达到 vLLM 的 8 倍、vLLM-opt 的 2 倍、MLFQ 的 1.5 倍<button class="cite" data-q="18">18</button>。LATS 上，MLFQ 一味追逐短调用，反而拖慢程序，Agentix 的 ATLAS 把程序的线程一起调度。Mixed 上差距最大，达到 vLLM 的 15 倍、MLFQ 的 5.5 倍、vLLM-opt 的 5 倍<button class="cite" data-q="19">19</button>。</p>
+    <p>Fig. 12 是单个推理引擎上的主实验。四行是四种负载（ShareGPT、BFCL、LATS、Mixed），三列是三种模型和卡数：LLaMA-3.1-8B 用 1 张 A100，LLaMA-3.1-70B 用 4 张，Falcon-180B 用 8 张。每幅小图比较 vLLM、vLLM-opt、MLFQ 和 Agentix 四个系统，横轴是每秒到达的程序数，纵轴是程序级每 token 延迟的平均值（秒/token）。曲线越靠右才上翘，说明在相同延迟下能承受的到达率越高，也就是吞吐越高。</p>
+    <p>vLLM 没有前缀缓存，要反复重算状态，最早上翘。ShareGPT 和 BFCL 上，FCFS 随到达率升高出现严重的队头阻塞；MLFQ 解决了调用级阻塞，吞吐是 vLLM-opt 的 1.5 倍；Agentix 同时处理两级阻塞，在高负载下达到 vLLM 的 8 倍、vLLM-opt 的 2 倍、MLFQ 的 1.5 倍<button class="cite" data-q="18">18</button>。LATS 上，MLFQ 一味追逐短调用，反而拖慢程序，Agentix 的 ATLAS 把程序的线程一起调度。Mixed 上差距最大，达到 vLLM 的 15 倍、MLFQ 的 5.5 倍、vLLM-opt 的 5 倍<button class="cite" data-q="19">19</button>。</p>
     <p class="mine"><b>本页说明：</b>摘要中“4 到 15 倍”的对照是没开前缀缓存的 vLLM；与打开前缀缓存等优化的 vLLM-opt 相比，引言给出的是 2 到 5 倍，这是更公平的比较。</p>
   </section>
 
@@ -4302,6 +4311,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig13.png" alt="LLaMA-3.1-8B 上四种负载的 P95 和 P99 延迟" loading="lazy"></button>
     </figure>
+    <p>Fig. 13 沿用 Fig. 12 第一列的设置，即 LLaMA-3.1-8B、一张 A100，四种负载各一行，左列是 P95 延迟，右列是 P99 延迟，横轴仍是程序到达率，比较的四个系统相同。</p>
     <p>抢占式调度能降低平均延迟，但可能饿死长程序、拉高尾延迟。ShareGPT 上 MLFQ 的平均延迟比 vLLM-opt 好很多，P95、P99 却很差<button class="cite" data-q="20">20</button>；BFCL 上 MLFQ 两项都更好。Agentix 在 8 个场景中有 7 个的尾延迟低于 MLFQ 和 vLLM-opt<button class="cite" data-q="21">21</button>，在 P95、P99 下吞吐最多高 1.7 倍。防饿死机制在这里起作用。</p>
   </section>
 
@@ -4310,10 +4320,12 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig14.png" alt="多引擎下四种负载均衡策略的平均、P95、P99 延迟" loading="lazy"></button>
     </figure>
-    <p>调度都用 PLAS 或 ATLAS，只比较负载均衡：轮转、最空闲优先、Preble（维护全局前缀树，长前缀匹配发往局部性最好的引擎）和 Agentix。4 个 LLaMA-3.1-8B 副本或 2 个 70B 副本，跑 ShareGPT 和 LATS。Agentix 比简单策略吞吐最多高 1.4 倍，与 Preble 接近<button class="cite" data-q="22">22</button>，但不用维护前缀树。ShareGPT 上优势更明显，因为对话历史的复用多。Fig. 15 显示在相同 SLO 下，可承受的到达率随副本数线性增长。</p>
+    <p>Fig. 14 测多引擎下的负载均衡。每个引擎内部的调度固定为 PLAS（单线程程序）或 ATLAS（多线程程序），只换负载均衡策略：轮转（Kubernetes 的默认做法）、发给当前调用数最少的引擎、Preble（维护全局前缀树，长前缀匹配的调用发往局部性最好的引擎，短的发往最空闲的引擎）和 Agentix（只看程序编号）。部署有两种：4 个 LLaMA-3.1-8B 副本，或 2 个 LLaMA-3.1-70B 副本；负载是 ShareGPT 和 LATS。四行对应四种模型和负载的组合，三列分别是平均、P95、P99 延迟，横轴是程序到达率。</p>
+    <p>Agentix 比轮转和最空闲优先吞吐最多高 1.4 倍，与 Preble 接近<button class="cite" data-q="22">22</button>，但不用维护前缀树。ShareGPT 上优势更明显，因为对话历史的复用多；副本越多，随机分配撞上有缓存的那台引擎的机会越小，按程序固定引擎的好处就越明显。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentix/fig15.png" alt="不同 SLO 下最大到达率随副本数的变化" loading="lazy"></button>
     </figure>
+    <p>Fig. 15 测扩展性：用 ShareGPT 负载和 LLaMA-3.1-8B，副本数取 1、2、4、8，延迟目标（SLO）取 0.3、0.5、1.0 秒/token 三档，纵轴是满足目标时 Agentix 能承受的最大程序到达率。三档目标下，最大到达率都随副本数线性增长，按程序做负载均衡不需要前缀树这类额外开销，可以直接横向扩展。</p>
   </section>
 
   <section class="panel s6">
@@ -4323,7 +4335,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/agentix/fig16.png" alt="不同程序数下各系统处理完一批程序的总时间" loading="lazy"></button>
       </figure>
-      <p>所有程序一开始就提交，看处理完一批的总时间。Agentix 缩短 10% 到 40%<button class="cite" data-q="23">23</button>。4000 个程序时 MLFQ 跑不完：新调用都进最高队列，活跃调用太多，频繁交换导致内存耗尽，尽管交换空间超过 1.2 TB<button class="cite" data-q="24">24</button>。</p>
+      <p>消融实验都用 LLaMA-3.1-8B，负载是 ShareGPT 和 LATS。Fig. 16 模拟离线批处理：把 1000、2000、4000 个 ShareGPT 程序在开始时一次性全部提交，纵轴是处理完整批程序的总时间（makespan），比较 vLLM、vLLM-opt、MLFQ 和 Agentix。</p>
+      <p>Agentix 把平均总时间缩短 10% 到 40%<button class="cite" data-q="23">23</button>。4000 个程序时 MLFQ 跑不完：新调用都进最高队列，活跃调用太多，频繁交换导致内存耗尽，尽管交换空间超过 1.2 TB<button class="cite" data-q="24">24</button>。</p>
     </div>
     <div class="fb">
       <h3><span class="fn">Fig. 17</span><span class="fn">Fig. 18</span>时间构成与交换函数</h3>
@@ -4333,7 +4346,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/agentix/fig18.png" alt="Agentix 与 vLLM 交换函数的交换耗时和吞吐" loading="lazy"></button>
       </figure>
-      <p>Fig. 17：Agentix 的延迟降低来自等待时间（程序级调度）和交换时间（新的交换函数）；抢占使 Agentix 和 MLFQ 的调度开销都高于 FCFS，但 Agentix 仍好于 MLFQ。Fig. 18：把 KV 块合并成一次传输，交换次数最多少 18 倍、交换时间少 3 到 7 倍，吞吐是 vLLM 原有函数的 1.3 倍<button class="cite" data-q="25">25</button>。</p>
+      <p>Fig. 17 把 ShareGPT 和 LATS 上的程序级每 token 延迟拆成四部分：执行、调度器开销、KV 缓存交换、排队等待，比较 Agentix、MLFQ 和 vLLM-opt。Fig. 18 单独看交换函数：横轴是程序到达率（每秒 3 到 4.5 个），左图是总交换耗时，柱上标了交换次数，右图是延迟，比较 vLLM 原有的交换函数和 Agentix 改写后的版本。论文没有写明 Fig. 18 用的是哪个负载。</p>
+      <p>Fig. 17：Agentix 的延迟降低来自等待时间（程序级调度）和交换时间（新的交换函数）；抢占使 Agentix 和 MLFQ 的调度开销都高于 FCFS，但 Agentix 仍好于 MLFQ。Fig. 18：把 KV 块合并成一次传输，交换次数最多少 18 倍（例如 254k 次降到 14k 次）、交换时间少 3 到 7 倍，吞吐是 vLLM 原有函数的 1.3 倍<button class="cite" data-q="25">25</button>。</p>
     </div>
   </section>
 
@@ -4623,11 +4637,13 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <button class="zoom" type="button"><img src="figures/cachescout/fig1.png" alt="(a) 多智能体旅行规划；(b) 反复调用各智能体时 KV 缓存的变化" loading="lazy"></button>
       </figure>
       <div>
-        <p>多智能体系统中，一个规划者把用户请求拆给若干专门的智能体。例子：规划日本旅行，规划者先让航班智能体查航班，再让酒店智能体推荐住处，再让餐厅智能体找餐馆。每个智能体每次被调用，开头都是相同的固定内容：角色说明、工具定义、示例，具体任务接在后面。这段内容的 KV 缓存可以在每次调用该智能体时复用，跨用户会话也可以。</p>
+        <p>Fig. 1 用一个旅行规划的例子说明问题。(a) 是执行过程：用户请规划一次日本旅行，规划者（Planner）依次调用航班、酒店、餐厅三个专门的智能体，每个智能体的提示由两部分组成，前面是固定内容（例如 system="hotel expert"，加上 search_hotel、reviews 等工具定义），后面才是这次的具体请求。(b) 画的是反复调用这几个智能体时 GPU 上 KV 缓存的变化。</p>
+        <p>多智能体系统中，一个规划者把用户请求拆给若干专门的智能体。例子中，规划日本旅行，规划者先让航班智能体查航班，再让酒店智能体推荐住处，再让餐厅智能体找餐馆。每个智能体每次被调用，开头都是相同的固定内容：角色说明、工具定义、示例，具体任务接在后面。这段内容的 KV 缓存可以在每次调用该智能体时复用，跨用户会话也可以。</p>
         <figure class="fig">
           <button class="zoom" type="button"><img src="figures/cachescout/fig2.png" alt="四种多智能体负载中固定前缀占全部提示 token 的比例" loading="lazy"></button>
         </figure>
-        <p>Fig. 2：在论文评估的四种负载中，这类固定内容占全部提示 token 的 53% 到 62%<button class="cite" data-q="1">1</button>。</p>
+        <p>Fig. 2 统计的是后面实验用的四种多智能体负载，任务分别来自 GSM8K（数学题）、MT-Bench（多轮对话）、GAIA（需要上网和用工具的推理）和 SWE-bench（修代码），都跑在论文搭建的六智能体框架上。每根条把全部提示 token 分成两段：反复出现的固定内容（系统提示、工具定义、技能和示例）和每个会话自己的内容。</p>
+        <p>固定内容占全部提示 token 的 53% 到 62%<button class="cite" data-q="1">1</button>，SWE-bench 最高。这部分是 KV 缓存复用的主要机会。</p>
       </div>
     </div>
   </section>
@@ -4644,7 +4660,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
 
   <div class="band">
     <h2>测量：哪些块值得保护，下一个智能体能不能预测，能不能事先写死</h2>
-    <p>四种负载（GSM8K、MT-Bench、GAIA、SWE-bench）都跑在一个六智能体的 supervisor 框架上，用 AutoGen 的 SelectorGroupChat 由模型决定下一个智能体。</p>
+    <p>这一节的测量回答三个问题，用的负载和后面的实验相同：GSM8K、MT-Bench、GAIA、SWE-bench 四类任务，都跑在论文搭建的六智能体 supervisor 框架上，智能体带工具，下一个由哪个智能体执行由 AutoGen 的 SelectorGroupChat 让模型在运行时决定。</p>
   </div>
 
   <section class="panel s6">
@@ -4652,6 +4668,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig3.png" alt="(a) 各类 KV 块平均被复用的次数；(b) anchor 占提示的比例随轮次变化" loading="lazy"></button>
     </figure>
+    <p>Fig. 3 回答哪些 KV 块值得保护。(a) 把四种负载缓存下来的 KV 块分成两类，anchor 块（智能体的固定前缀）和会话历史块（某个会话自己的对话内容），统计每个块在之后平均被复用了多少次。(b) 看 anchor 占每个提示的比例 φ，即系统提示、工具定义、技能和少样本示例的 token 数除以提示总 token 数，横轴是会话的轮次，取一个中位长度的会话的前半段。</p>
     <p>(a) anchor 块平均被复用 49 到 173 次<button class="cite" data-q="5">5</button>，因为一个智能体的每次调用都会访问它，而且跨会话；属于单个会话历史的块只被复用 12 到 15 次，相差 4 到 13 倍。(b) 复用次数多还不够，还要看它占多大比例：随着会话历史累积，anchor 的占比逐渐下降，但到第十几轮仍占每个提示的 43% 到 60%<button class="cite" data-q="6">6</button>。两者合起来说明，保护 anchor 块收益最大。</p>
   </section>
 
@@ -4660,11 +4677,13 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig4.png" alt="(a) 四种协作方式下的可预测性 R；(b) 在线转移计数的预测准确率随观察次数变化" loading="lazy"></button>
     </figure>
-    <p>可预测性 R 定义为：知道当前智能体后，下一个智能体的不确定性（熵）减少的比例，0 表示无关，1 表示完全确定。(a) 固定流水线 R 为 1.0，有主持人的辩论 0.78，由模型选下一个的 SelectorGroupChat 0.57，随机选 0.12。(b) 只用一个在线的转移计数（预测为当前智能体最常见的后继），观察 50 次调度后 top-1 准确率达到 76% 到 86%，不需要离线训练<button class="cite" data-q="7">7</button>。</p>
+    <p>Fig. 4 回答下一个智能体能不能预测。可预测性 R 定义为：知道当前智能体后，下一个智能体的不确定性（熵）减少的比例，0 表示无关，1 表示完全确定。(a) 在六智能体框架上换四种协作方式，各算一个 R：固定流水线（Pipeline，按固定顺序轮流）、有裁判的辩论（Debate）、由模型选下一个的 SelectorGroupChat（Selector，也就是实验里实际用的方式），以及随机选（Random）。(b) 把四种负载的执行轨迹按时间顺序回放给一个在线的一阶转移计数器，它总是预测当前智能体最常见的后继，横轴是已经观察到的调度次数，纵轴是预测下一个智能体的 top-1 准确率。</p>
+    <p>(a) 固定流水线 R 为 1.0，有主持人的辩论 0.78，由模型选下一个的 SelectorGroupChat 0.57，随机选 0.12。(b) 只用一个在线的转移计数（预测为当前智能体最常见的后继），观察 50 次调度后 top-1 准确率达到 76% 到 86%，不需要离线训练<button class="cite" data-q="7">7</button>。</p>
     <figure class="fig">
-      <button class="zoom" type="button"><img src="figures/cachescout/fig5.png" alt="同一六智能体框架在四种协作方式下学到的转移矩阵" loading="lazy"></button>
+      <button class="zoom" type="button"><img src="figures/cachescout/fig5.png" alt="六智能体框架在四种协作方式下学到的转移矩阵" loading="lazy"></button>
     </figure>
-    <p>Fig. 5：相同的六个智能体，换一种协作方式，转移矩阵完全不同。执行结构由运行时的协作行为决定，不由框架决定，所以无法离线写死，只能在线学习<button class="cite" data-q="8">8</button>。</p>
+    <p>Fig. 5 是 Fig. 4(a) 那四种协作方式学到的转移矩阵 P(下一个 | 当前)：行是当前智能体，列是下一个智能体，格子里是转移概率，颜色越深概率越大。六个智能体用字母 P、A、C、T、R、D 表示，论文正文只提到其中有 Coder 和 Reviewer，没有逐一列出全称。流水线是一条固定的链，每行只有一个 1；辩论集中在 Coder 和 Reviewer 之间来回，由裁判定期裁决；Selector 的概率集中在少数几条边上，例如 T 之后 0.91 回到 P；随机选几乎均匀分布。</p>
+    <p>相同的六个智能体，换一种协作方式，转移矩阵完全不同。执行结构由运行时的协作行为决定，不由框架决定，所以无法离线写死，只能在线学习<button class="cite" data-q="8">8</button>。</p>
   </section>
 
   <div class="band">
@@ -4677,6 +4696,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig6.png" alt="CacheScout 架构：转移学习器、存活评分器、后台预取协调器" loading="lazy"></button>
     </figure>
+    <p>Fig. 6 是架构图。CacheScout 夹在上方的智能体框架和下方的 vLLM 之间，图中带编号的箭头是一次调用经过的步骤：请求到来时由前缀块哈希识别出是哪个智能体并更新转移计数（①），引擎要淘汰块时按存活分数排序（②④），空闲时为预测的下一个智能体发预热请求（③⑤）。Fig. 7 画的是存活分数怎么算：先把学到的转移图里置信度低的边剪掉，再从当前智能体出发做广度优先搜索，按跳数给每个智能体打分。</p>
     <dl class="defs">
       <dt>① 转移学习器</dt><dd>把智能体的执行看作一阶马尔可夫链。每个请求用前缀块的哈希作为指纹识别出是哪个智能体，指纹变化就意味着一次调度，相应的转移计数加一<button class="cite" data-q="9">9</button>，转移概率就是归一化后的计数（加一个小的平滑项）。每次只改一个计数，状态有界，不需要事先知道工作流，也不需要框架配合。只学习“下一个”，因为淘汰决策只需要预见下一步。</dd>
       <dt>②④ 存活评分器</dt><dd>理想的分数是“某个 anchor 在接下来 K 步内被用到的概率”，精确计算要枚举所有路径，太贵。近似做法（Fig. 7）：只保留高置信度的转移，构成稀疏的执行图，从当前智能体做一次广度优先搜索，得到到每个智能体的最少跳数；跳数越少，分数越高<button class="cite" data-q="10">10</button>。每个块继承它所属 anchor 的分数，再乘以最近访问的衰减项，再乘以块的 token 数（重算代价），分数最低的先淘汰。执行可预测时存活分数起主要作用；不可预测时存活分数趋于平坦，最近访问项起主导，策略自然退化为 LRU<button class="cite" data-q="11">11</button>。</dd>
@@ -4698,6 +4718,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig8.png" alt="四种负载下三个系统的 KV 缓存命中率与平均 TTFT" loading="lazy"></button>
     </figure>
+    <p>Fig. 8 是主实验：在一台 RTX PRO 6000（96 GB）服务器上用 Llama-3.1-8B-Instruct，跑 GSM8K、MT-Bench、GAIA、SWE-bench 四种负载，比较 vLLM（前缀缓存加 LRU 淘汰）、Continuum（工具调用前后按 TTL 0.3 秒保留 KV）和 CacheScout。三个系统的 vLLM 配置、显存预算、解码参数和前缀缓存设置都相同。(a) 是 KV 缓存命中率，即命中缓存的提示 token 占全部提示 token 的比例；(b) 是平均首 token 时间（TTFT）。Fig. 9 用相同的运行，画四种负载上 TTFT 的累积分布，横轴取对数。</p>
     <p>CacheScout 的命中率在四种负载上都最高，比 vLLM 高 10 到 18 个百分点，达到 81% 到 85%；平均 TTFT 降低 18% 到 45%。Fig. 9 的 CDF 显示改善遍及整个分布：中位数 TTFT 降低 14% 到 52%，例如 GAIA 从 231 ms 到 114 ms<button class="cite" data-q="15">15</button>；三种负载的 P99 降低 21% 到 52%。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig9.png" alt="四种负载的 TTFT 累积分布" loading="lazy"></button>
@@ -4710,7 +4731,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig10.png" alt="四种负载下的平均单轮延迟与峰值吞吐" loading="lazy"></button>
     </figure>
-    <p>平均单轮延迟降低 29% 到 38%，峰值吞吐高 19% 到 57%。Fig. 11 把会话到达率从低扫到高：vLLM 的 KV 缓存饱和后吞吐就不再增长，CacheScout 推迟了饱和；在相同的平均延迟预算下，能承受的到达率是 vLLM 的 1.7 到 12 倍、Continuum 的 4.2 到 16 倍<button class="cite" data-q="16">16</button>。</p>
+    <p>Fig. 10 沿用主实验的设置，(a) 是平均单轮延迟，一轮指一次智能体调用，包括 prefill 和 decode；(b) 是峰值吞吐，即每秒完成的轮数。Fig. 11 再把会话到达率从每秒 0.2 个扫到 50 个，四行是四种负载，四列分别是平均、P90、P99 单轮延迟和吞吐，横轴都是会话到达率，取对数。</p>
+    <p>平均单轮延迟降低 29% 到 38%，峰值吞吐高 19% 到 57%。Fig. 11 中，vLLM 的 KV 缓存饱和后吞吐就不再增长，CacheScout 推迟了饱和；在相同的平均延迟预算下，能承受的到达率是 vLLM 的 1.7 到 12 倍、Continuum 的 4.2 到 16 倍<button class="cite" data-q="16">16</button>。整个扫描范围内 CacheScout 的命中率保持在 86% 到 87%，vLLM 在 65% 到 68%。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig11.png" alt="平均、P90、P99 单轮延迟和吞吐随会话到达率变化" loading="lazy"></button>
     </figure>
@@ -4721,6 +4743,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig12.png" alt="vLLM、只用预测淘汰、预测淘汰加预取三种配置的命中率、TTFT、单轮延迟、吞吐" loading="lazy"></button>
     </figure>
+    <p>Fig. 12 拆开两个机制的贡献，比较三种配置：原版 vLLM、只开预测淘汰（Eviction only）、预测淘汰加后台预取（Eviction + prefetch，即完整的 CacheScout），四幅小图分别是命中率、平均 TTFT、平均单轮延迟和峰值吞吐，四种负载都跑。论文正文还提到只开预取的结果，但没有画在图里。</p>
     <p>只开预测淘汰，命中率就比 vLLM 高 18 到 22 个百分点，单独开预取最多只多 1 个百分点<button class="cite" data-q="17">17</button>。单独预取几乎没用：多数轮次没有可预热的前缀，而且预热出来的块在预测的智能体到来之前就被 LRU 淘汰了。两者合用时，预热的 anchor 被淘汰策略保护下来，在 GAIA 上单轮延迟比只用淘汰再降 28%（347 ms 到 251 ms）<button class="cite" data-q="18">18</button>。</p>
     <p class="mine"><b>本页说明：</b>两处数字对不上。消融中只用淘汰就比 vLLM 高 18 到 22 个百分点，而主结果中完整系统只高 10 到 18 个百分点；Fig. 12 与 Fig. 8 中相同指标的绝对值也不同（例如 vLLM 在 GSM8K 上的平均 TTFT，一处约 180 ms，一处约 280 ms）。两组实验的设置应当不同，论文没有说明差别。</p>
   </section>
@@ -4730,11 +4753,13 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig13.png" alt="Qwen3-235B-A22B 上的命中率，以及 SWE-bench 上 TTFT、单轮延迟、吞吐随到达率变化" loading="lazy"></button>
     </figure>
-    <p><b>大模型。</b>Qwen3-235B-A22B 上命中率高 7 到 13 个百分点。SWE-bench 提示长，prefill 代价高，到达率从每秒 0.2 到 2.0 个会话，平均 TTFT 都降低 33% 到 54%；vLLM 的吞吐在每秒 5.2 轮饱和，CacheScout 到 7.2 轮，高 37%<button class="cite" data-q="19">19</button>。</p>
+    <p><b>大模型。</b>Fig. 13 换成 Qwen3-235B-A22B-FP8，这是一个 2350 亿参数的混合专家模型，在 4 张 H200 上做张量并行，只和原版 vLLM 比较，因为 Continuum 的 vLLM 分支不支持这个模型。(a) 是四种负载的命中率；(b)(c)(d) 只用 SWE-bench，横轴是会话到达率（每秒 0.2 到 2.0 个），纵轴分别是平均 TTFT、平均单轮延迟和吞吐。</p>
+    <p>Qwen3-235B-A22B 上命中率高 7 到 13 个百分点。SWE-bench 提示长，prefill 代价高，到达率从每秒 0.2 到 2.0 个会话，平均 TTFT 都降低 33% 到 54%；vLLM 的吞吐在每秒 5.2 轮饱和，CacheScout 到 7.2 轮，高 37%<button class="cite" data-q="19">19</button>。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/cachescout/fig14.png" alt="(a) 不同 GPU 缓存预算下的命中率；(b) 开关预取门控时的单轮延迟" loading="lazy"></button>
     </figure>
-    <p><b>缓存容量。</b>(a) 缓存预算从 100 块到 200 块，CacheScout 的命中率保持在 86% 到 87%，vLLM 从 64.4% 升到 76.6%<button class="cite" data-q="20">20</button>，要多得多的显存才能接近。低于 93 块时放不下最大的请求，不在考察范围内<button class="cite" data-q="21">21</button>。(b) 关掉按可预测性开关预取的门控，小缓存下单轮延迟最多高 22%，因为无用的预热与正常推理争抢 GPU<button class="cite" data-q="22">22</button>。运行时的状态在 24 个智能体时也不到 25 KB，每次记录约 1 µs，计算存活分数不到 6 µs。</p>
+    <p><b>缓存容量。</b>Fig. 14 回到 Llama-3.1-8B，人为限制 GPU 上 KV 缓存的块数，从 100 块到 200 块，论文没有写明这里跑的是哪种负载。(a) 比较 vLLM 和 CacheScout 的命中率；(b) 比较 CacheScout 打开和关掉“按可预测性决定是否预取”的门控时的单轮延迟。</p>
+    <p>(a) 缓存预算从 100 块到 200 块，CacheScout 的命中率保持在 86% 到 87%，vLLM 从 64.4% 升到 76.6%<button class="cite" data-q="20">20</button>，要多得多的显存才能接近。低于 93 块时放不下最大的请求，不在考察范围内<button class="cite" data-q="21">21</button>。(b) 关掉按可预测性开关预取的门控，小缓存下单轮延迟最多高 22%，因为无用的预热与正常推理争抢 GPU<button class="cite" data-q="22">22</button>。运行时的状态在 24 个智能体时也不到 25 KB，每次记录约 1 µs，计算存活分数不到 6 µs。</p>
     <p class="mine"><b>本页说明：</b>主实验没有写明 KV 缓存的容量。敏感度实验的 100 到 200 块，按 vLLM 默认每块 16 token 计算只有约 1600 到 3200 token，仅能容纳一两个请求，是刻意制造的缓存压力；在 96 GB 显卡上跑 8B 模型的正常配置下，缓存要大几个数量级，淘汰没有这么频繁，收益会小得多。</p>
   </section>
 
