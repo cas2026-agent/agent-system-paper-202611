@@ -76,7 +76,7 @@
     <div class="ph"><span class="tag">问题</span><h2>现有模拟器缺什么</h2><span class="fn">Table I</span></div>
     <p>Table I 用十个问题比较五个系统级模拟器，分成三组。第一组问能否表达拆分和异构的部署，第二组问能否表达模型在多设备上的放法，第三组问是否模拟了某种运行时行为。✔ 为完全支持，△ 为部分支持，✗ 为不支持。</p>
     <div class="tbl"><table>
-      <thead><tr><th>列（原文）</th><th class="wrap">这一列在问什么</th><th class="wrap">打 ✔ 的样子</th><th class="wrap">打 ✗ 的样子</th></tr></thead>
+      <thead><tr><th>列名</th><th class="wrap">这一列在问什么</th><th class="wrap">打 ✔ 的样子</th><th class="wrap">打 ✗ 的样子</th></tr></thead>
       <tbody>
         <tr><td>PD<small>Prefill/Decode Disaggregation</small></td><td class="wrap">prefill 和 decode 能放到不同实例吗？</td><td class="wrap">设定 M 个 prefill 实例配 N 个 decode 实例，KV 传输计入耗时</td><td class="wrap">一个实例包办两个阶段，这种部署配置不出来</td></tr>
         <tr><td>AF<small>Attention/FFN Disaggregation</small></td><td class="wrap">一层之内的注意力和前馈网络能放到不同设备吗？</td><td class="wrap">注意力在 PIM 上，前馈网络在 GPU 上</td><td class="wrap">一层只能整体放在一种设备上</td></tr>
@@ -403,7 +403,7 @@
   </section>
 
   <details class="qbox">
-    <summary>原文引用<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
+    <summary>引文出处<span>英文逐字摘录，页码为 PDF 页码，编号与角标对应</span></summary>
     <ol class="quotes">
       <li data-key="abstract-gap"><blockquote lang="en">existing simulators lack the ability to jointly model heterogeneous hardware and disaggregated serving techniques within a unified, runtime-driven framework.</blockquote><p class="loc">摘要，第 1 页</p></li>
       <li data-key="abstract-loop"><blockquote lang="en">LLMServingSim 2.0 embeds serving decisions and hardware behavior into a single runtime loop, enabling interaction-aware modeling of batching, routing, placement, offloading, memory management, and power consumption.</blockquote><p class="loc">摘要，第 1 页</p></li>
