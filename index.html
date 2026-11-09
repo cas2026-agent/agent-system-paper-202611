@@ -5308,6 +5308,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/yolofs/fig3.png" alt="207 份事故与攻击的影响：操作、范围、智能体反应、用户察觉、可恢复性" loading="lazy"></button>
     </figure>
+    <p>Fig. 3 只统计 290 份报告中的 158 份事故和 49 条攻击路径，共 207 份，从五个维度标注影响：智能体做了什么操作（写、删、读出泄露）、波及范围（项目内、系统文件、用户文件、密钥）、智能体自己的反应（没察觉、道歉、谎报）、用户何时发现（当即、事后、一直没发现）、能否恢复（失败、容易、困难）。每一行是一个维度的分布，某一维度不明的报告不计入该行，所以各行总数（标在行名旁）不同。</p>
     <div class="tbl"><table>
       <thead><tr><th>维度</th><th class="wrap">分布</th></tr></thead>
       <tbody>
@@ -5327,6 +5328,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/yolofs/fig4.png" alt="原因分类：模型、外壳、用户三方面，计数可重叠" loading="lazy"></button>
       </figure>
+      <p>Fig. 4 对全部 290 份报告标注事故的原因，分为模型、外壳、用户三大类，每类下再细分，一份报告可以同时有多个原因，所以计数会重叠。</p>
       <dl class="defs">
         <dt>模型（168 份）</dt><dd>动作不对：目标错（让归档却删了，改断言来让测试通过），范围过大，工具用错（没转义的 ~ 删掉了家目录）。指令被忽略，或在长会话压缩上下文时被挤掉。还有提示注入。</dd>
         <dt>外壳（218 份）</dt><dd>shell 绕过内置工具的策略（读被拒就用 cat，删被拦就用 rm）；过滤只看命令字符串<button class="cite" data-q="6">6</button>；沙箱太紧或太松。更普遍的问题是策略必须事先定死，宽了放任误用，紧了逼用户关掉保护。</dd>
@@ -5372,6 +5374,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/yolofs/fig6.png" alt="(a) 暂存供用户审阅；(b) 快照与回溯供智能体自我纠正；(c) 渐进式授权" loading="lazy"></button>
     </figure>
+    <p>Fig. 6 用三段终端对话演示三个机制，每段突出一个方面：(a) 智能体的修改先进入暂存区，用户用 yolo 命令查看改了什么，再决定提交或丢弃；(b) 每条命令后自动打快照，智能体可以查看某一步的改动并回溯到之前的状态；(c) 智能体要读 ~/.ssh/id_rsa 这类没有规则覆盖的文件时，YoloFS 暂停并询问用户，用户选择“拒绝且不再询问”后，这条决定变成一条规则（~/.ssh/id_rsa 映射为拒绝），之后的访问直接被拦下，审阅时能看到拦截记录。Fig. 7 是实现架构：智能体的命令在挂载命名空间里运行，根文件系统是 YoloFS 内核模块，用户态 CLI 负责会话、审阅和规则。</p>
     <div class="figgrid">
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/yolofs/fig7.png" alt="YoloFS 架构：内核文件系统与用户态 CLI" loading="lazy"></button>
@@ -5494,6 +5497,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/yolofs/fig11.png" alt="文件位于底层、快照或暂存区时各元数据操作的延迟" loading="lazy"></button>
     </figure>
+    <p>性能实验在 CloudLab 的 c6525-25g 机器上进行：AMD EPYC 7302P 16 核 3 GHz，128 GB DDR4-3200 内存，Ubuntu 24.04，Linux 6.8 内核，底层文件系统是装在 480 GB Micron 5200 MAX SATA SSD 上、默认参数格式化的 Ext4。对照有两个：OverlayFS（Linux 内核里的联合文件系统，用多个下层目录加额外的后处理来模拟 YoloFS 的功能）和 BranchFS（一个面向智能体探索的研究型 FUSE 文件系统），两者都没有 YoloFS 的权限控制。上表测的是在暂存区里对一个 1 GB 文件做单线程 4 KB 读写的吞吐。Fig. 11 测元数据操作（create、open、rename、unlink 等）的延迟，被操作的文件分别位于底层文件系统（Base）、某个快照（Snap）或暂存区（Stage）三种位置，YoloFS 还分开权限检查和关闭权限检查两种情况。</p>
     <p>YoloFS 读写与 Ext4 持平。元数据操作多数比 OverlayFS 快；文件在暂存区时，readdir、rename、unlink 因为走内存里的覆盖树和日志，甚至比 Ext4 快。BranchFS 慢 20 倍以上。权限检查的开销多数操作可忽略，stat 上为 4%<button class="cite" data-q="14">14</button>。</p>
   </section>
 
@@ -5502,11 +5506,11 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/yolofs/fig12.png" alt="快照数量增加时 create、read、commit 的延迟" loading="lazy"></button>
     </figure>
-    <p>反复覆写十个文件来累积快照。OverlayFS 到约 50 个快照就失败了，因为挂载参数超过内核的长度上限<button class="cite" data-q="15">15</button>。OverlayFS 和 BranchFS 的新建和读取随快照增多变慢，YoloFS 不变。提交时间随快照数线性增长，但 YoloFS 只读一个日志文件，比逐个查询快。</p>
+    <p>Fig. 12 看快照多了以后会不会变慢：反复覆写十个文件来累积快照，横轴是快照数，三幅小图分别是新建文件、读取没被改过的文件、最后提交到底层的延迟。OverlayFS 到约 50 个快照就失败了，因为挂载参数超过内核的长度上限<button class="cite" data-q="15">15</button>。OverlayFS 和 BranchFS 的新建和读取随快照增多变慢，YoloFS 不变。提交时间随快照数线性增长，但 YoloFS 只读一个日志文件，比逐个查询快。</p>
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/yolofs/fig13.png" alt="按 Linux 内核补丁系列建 worktree、编译、逐个打补丁的开发负载耗时" loading="lazy"></button>
     </figure>
-    <p>按一组真实的内核补丁走一遍：建 git worktree、编译内核，然后对每个补丁搜索阅读、修改、增量编译、git 提交，最后把全部改动提交到底层。YoloFS 与 Ext4 相当，只是最后提交十万多个文件多花 3.5 秒；OverlayFS 比 YoloFS 慢 18%，因为每次快照都要重新挂载；BranchFS 有 bug，初次编译之后就跑不下去<button class="cite" data-q="16">16</button>。</p>
+    <p>Fig. 13 模拟一个开发者在 Linux 内核代码上的工作，按各阶段画耗时：按一组真实的内核补丁走一遍：建 git worktree、编译内核，然后对每个补丁搜索阅读、修改、增量编译、git 提交，最后把全部改动提交到底层。YoloFS 与 Ext4 相当，只是最后提交十万多个文件多花 3.5 秒；OverlayFS 比 YoloFS 慢 18%，因为每次快照都要重新挂载；BranchFS 有 bug，初次编译之后就跑不下去<button class="cite" data-q="16">16</button>。</p>
   </section>
 
   <section class="panel s6">
