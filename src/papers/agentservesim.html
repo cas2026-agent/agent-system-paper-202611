@@ -284,7 +284,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentservesim/fig3.png" alt="p99 JCT 误差与逐程序 MAPE" loading="lazy"></button>
     </figure>
-    <p>平均值可能掩盖问题，所以再看两个指标，横轴都是到达速率。上面四张图是 p99 JCT 误差，看最慢那 1% 的 program：B200 上在 2.7% 以内，RTX 上最高 7.1%。下面四张图是 MAPE，每个 program 单独算误差的绝对值，再取平均：B200 上不超过 5.9%，RTX 上在 7% 到 11.2% 之间。</p>
+    <p>Figure 3 沿用 Figure 2 的四组配置（B200 上 Llama-3.1-8B 跑 SWE-bench、B200 上 8B 跑 BFCL、B200 上 70B 以 TP2 跑 SWE-bench、RTX PRO 6000 上 70B 以 TP2 跑 SWE-bench），保留策略都是 TTL、调度都是 PLAS，每列一组配置，每组配置里最大的误差在图中标出。平均值可能掩盖问题，所以再看两个指标，横轴都是到达速率。上面四张图是 p99 JCT 误差，看最慢那 1% 的 program：B200 上在 2.7% 以内，RTX 上最高 7.1%。下面四张图是 MAPE，每个 program 单独算误差的绝对值，再取平均：B200 上不超过 5.9%，RTX 上在 7% 到 11.2% 之间。</p>
     <p>两组数字放在一起看，拥堵时单个 program 的完成时间更难算准，它取决于在长队列里和谁挨着、缓存恰好被谁挤掉；这些偏差有正有负，平均后相互抵消，所以平均 JCT 仍然准。用这个模拟器比较策略时，比较平均值是可靠的，比较个别 program 要把 10% 左右的误差考虑进去。</p>
   </section>
 
@@ -293,7 +293,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/agentservesim/fig5.png" alt="真实 vLLM 与模拟器的瞬时吞吐" loading="lazy"></button>
     </figure>
-    <p>JCT 对得上可能只是总量凑巧，这张图检验过程是否也一致。横轴是从第一个 program 到达起的时间，纵轴是每 10 秒内每秒生成的 token 数。两条线的相关系数 0.98，并在约 1100 秒处同时结束。</p>
+    <p>Figure 5 取 B200 上 8B 跑 SWE-bench、到达速率每秒 0.04 个 program 的那一组，两边都用每次调用的 token 数和首末 token 时间，以相同方法每 10 秒算一次生成吞吐。JCT 对得上可能只是总量凑巧，这张图检验过程是否也一致。横轴是从第一个 program 到达起的时间，纵轴是每 10 秒内每秒生成的 token 数。两条线的相关系数 0.98，并在约 1100 秒处同时结束。</p>
     <div class="tbl"><table>
       <thead><tr><th>指标</th><th class="r">实测</th><th class="r">模拟</th></tr></thead>
       <tbody>
