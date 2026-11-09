@@ -5586,7 +5586,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/safe-resume/fig1.png" alt="智能体检查点与回滚的系统模型" loading="lazy"></button>
     </figure>
-    <p>借用 Chandy–Lamport 分布式快照的抽象，加上智能体特有的三点：内部状态多种多样、执行非确定、外部世界不随智能体回滚。</p>
+    <p>Fig. 1 是论文的执行模型。下方的大框是智能体系统，里面每一条水平虚线是一个进程 P<sub>1</sub> 到 P<sub>n</sub>，方框 S<sub>i</sub><sup>k</sup> 是进程 i 的第 k 个状态；实线箭头 e 是事件，把进程从一个状态推到下一个状态；进程之间的箭头 m 是消息。上方是外部世界，m<sub>Input</sub> 是从外部进来的输入，m<sub>Output</sub> 是送到外部的输出。蓝色虚线是一个检查点 C，它斜着切过各个进程，记下每个进程在切线处的状态。</p>
+    <p>这个模型借用 Chandy–Lamport 分布式快照的抽象，加上智能体特有的三点：内部状态多种多样、执行非确定、外部世界不随智能体回滚。</p>
     <dl class="defs">
       <dt>进程</dt><dd>独立演化的有状态组件，不一定是操作系统进程：主智能体、子智能体、框架管的对话状态、工具运行时、工作区文件系统都算。</dd>
       <dt>事件</dt><dd>一次操作加上决定其结果的非确定因素（LLM 采样、随机数、外部服务的响应）。</dd>
@@ -5619,6 +5620,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <figcaption><span class="fig-no">Fig. 3</span>SF2 不一致：保存的各部分状态拼不成一个因果一致的切面。</figcaption>
       </figure>
     </div>
+    <p>Fig. 2 到 Fig. 6 沿用 Fig. 1 的画法，粉色区域是回滚抹掉的那段执行，蓝色虚线框是检查点保存的状态，红字 Rollback 标出发生回滚的时刻。Fig. 2：检查点只保存了 P<sub>n</sub> 的状态 S<sub>n</sub><sup>1</sup>，P<sub>1</sub> 不在范围内；P<sub>1</sub> 在检查点前后已经走到 S<sub>1</sub><sup>3</sup>，回滚只把 P<sub>n</sub> 拉回去，恢复出来的组合中 P<sub>1</sub> 的状态与检查点不配套。Fig. 3：检查点同时保存了 P<sub>1</sub> 的 S<sub>1</sub><sup>1</sup> 和 P<sub>n</sub> 的 S<sub>n</sub><sup>2</sup>，但 S<sub>n</sub><sup>2</sup> 是在收到 P<sub>1</sub> 之后发来的消息才形成的，而 P<sub>1</sub> 被存在发消息之前，两部分拼起来是一个因果上不可能出现的组合。</p>
     <dl class="defs">
       <dt>SF1 覆盖不全</dt><dd>任务需要的进程不全在 K 里。范围外的进程可能带着检查点之后的新状态活过回滚，也可能崩溃后从更早的状态甚至初始状态重启。例：智能体验证了部署清单并在框架状态里记下 validated=true，清单却在检查点范围外的临时工作区里；崩溃后工作区按模板重建，框架恢复到验证之后，智能体可能部署一份没验证过的清单。框架类检查点不含工作区和运行时；工作区类不含进程和环境；操作系统类不含存在沙箱外的框架状态和外部服务的状态。具体实现还会更窄，如 Hermes 跳过大于 10 MB 的文件。</dd>
       <dt>SF2 状态不一致</dt><dd>保存的各部分各自都有效，但某个状态反映了一个事件，而产生这个事件的前驱在另一部分里还没发生<button class="cite" data-q="7">7</button>。例：修补漏洞、跑测试、在对话状态里记下测试通过；如果对话状态恢复到测试之后、工作区恢复到修补之前，智能体可能直接提交有漏洞的文件。Cline 允许分别恢复工作区和任务历史，就是一个现成的例子。</dd>
@@ -5641,6 +5643,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <figcaption><span class="fig-no">Fig. 6</span>SF5 未记录的外部效果。</figcaption>
       </figure>
     </div>
+    <p>Fig. 4：上面一条线 P<sub>ow</sub> 是外部世界，下面 P<sub>in</sub> 是智能体；检查点保存了智能体的 S<sub>i</sub><sup>1</sup>，它是根据外部世界当时的 S<sub>o</sub><sup>1</sup> 得出的。之后外部世界变成 S<sub>o</sub><sup>2</sup>，回滚只把智能体拉回 S<sub>i</sub><sup>1</sup>，外部世界不会跟着回去。Fig. 5：检查点在 S<sub>i</sub><sup>1</sup>，事件 e<sub>i</sub> 由动作 a 和非确定因素 ξ（模型采样、随机数、外部响应）共同决定；原来走到 S<sub>i</sub><sup>2</sup>，回滚重放时 ξ 不同，走到另一个状态 S<sub>i</sub><sup>n</sup>（红色虚线）。Fig. 6：智能体从 S<sub>i</sub><sup>1</sup> 走到 S<sub>i</sub><sup>2</sup> 时已经向外部世界发出了输出，回滚回到 S<sub>i</sub><sup>1</sup> 后再走一遍，同样的输出又发一次（红色虚线箭头）。</p>
     <dl class="defs">
       <dt>SF3 外部状态不符</dt><dd>检查点里的状态所依赖的外部条件在恢复时已经变了。例：检查点里存着“当前员工”的收件人名单，之后有人离职，回滚后智能体把敏感文件发给了前员工。考察的系统中都没有在恢复时重新核验外部依赖的通用机制，而且这是结构性的，外部状态归远程服务所有。</dd>
       <dt>SF4 非确定重放</dt><dd>回滚后重新执行的操作因为非确定性得出不同结果，而带过来的安全状态没有和原来的结果绑定。一种是为某条路径确立的审批或验证结果被另一条路径沿用；另一种是反复回滚，把一次安全相关的随机决定变成反复试到满意为止<button class="cite" data-q="8">8</button>。例：随机抽样跑回归测试，第一次抽中了能发现缺陷的测试，但结果落盘前失败了；回滚后重抽没抽中，构建通过并发布。</dd>
@@ -5698,6 +5701,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/safe-resume/fig7.png" alt="方法总览：收集、分析、检查、验证" loading="lazy"></button>
     </figure>
+    <p>Fig. 7 是测量流程的总览，从左到右四个阶段，每个阶段由一个基于大模型的智能体完成，前一阶段的产出交给后一阶段。</p>
     <dl class="defs">
       <dt>收集</dt><dd>执行任务，收集运行轨迹（模型和框架操作、检查点的创建与内容、状态变化、工具输入输出）和程序上下文（任务代码、工作流实现、工具定义）。</dd>
       <dt>分析</dt><dd>把框架各自的记录规范成语义事件，重建每个事件读写的带版本的状态（内部或外部、被哪些检查点覆盖），再重建事件与状态之间的依赖。一个状态或输出，如果改变它会导致任务失败或改变任务结果，就标为安全相关；持久改变外部状态的输出标为安全相关的外部效果。所有标注在回滚验证之前固定。</dd>
