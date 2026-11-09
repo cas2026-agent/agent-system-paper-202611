@@ -23,6 +23,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/specbox/fig1.png" alt="串行执行与重叠执行的对比" loading="lazy"></button>
     </figure>
+    <p>Fig. 1 是两步智能体执行（Step N 和 Step N+1）的时间线，横轴是时间，每一步由五段组成：读入上下文、模型生成、准备沙箱环境、传输数据、在沙箱里执行。第一行是原始做法，五段首尾相接。第二行加上步内预热（C1）：模型还在生成时就开始准备沙箱，准备与生成重叠。第三行再加跨步预取（C2）：根据上一步预测下一步要用的沙箱，在当前步执行时就把它准备好。第四行加上语义缓存和带外传输（C3）：缓存命中时跳过执行，传输段变短。红色箭头是每加一项缩短的时间。</p>
     <p>思路是在请求到来之前，提前启动最可能被用到的沙箱，让准备工作与模型生成重叠。困难在于智能体的工具调用是随着流式 token 逐步显现的，在语义足够之前都不确定[[uncertain]]；而且多轮会话中下一步用什么取决于中间结果。服务器无关计算（serverless）里成熟的预热和预取技术通常假设执行目标或工作流图事先已知，不能直接搬过来。</p>
   </section>
 
@@ -33,6 +34,7 @@
         <button class="zoom" type="button"><img src="figures/specbox/fig2.png" alt="(a) QPS 为 1 和 20 时单步时间的构成；(b) 32 种沙箱的平均冷启动时间" loading="lazy"></button>
       </figure>
       <div>
+        <p>Fig. 2 是动机测量。(a) 在按需启动沙箱的运行时上，QPS 为 1 和 20 两种负载下，把智能体每一步的时间拆开，画出各段占比；(b) 测 32 种沙箱环境的平均冷启动时间，包括 MCPBench 的全部沙箱和另外几种常用环境，横轴是沙箱编号。多数沙箱 2 到 4 秒能起来，重的要近 20 秒。</p>
         <p>(a) 把一步拆成五段：处理上下文、生成 token（这两段属于模型推理）、准备沙箱环境、传输输入输出数据、在沙箱里执行。准备环境在 QPS 为 1 时占 22.3%，QPS 为 20 时占 28.1%；数据传输占 8% 到 11%。后三段是 SpecBox 能优化的范围，不改模型推理本身。</p>
         <p>(b) MCPBench 的全部沙箱加上几种常用环境，共 32 种，多数 2 到 4 秒启动完，重型的接近 20 秒[[cold]]。</p>
       </div>
@@ -114,7 +116,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/specbox/fig9.png" alt="三种运行时下每个会话累计沙箱准备时间的分布" loading="lazy"></button>
     </figure>
-    <p>只统计每次工具调用前等沙箱准备好的时间，不含沙箱内的计算。按需的累计时间随步数增长，分布长尾明显；SpecBox 集中在一秒以内。相对按需降低到 1/4.53[[cum]]，与常驻相差 10.6%[[gap]]。</p>
+    <p>Fig. 9 用 200 条会话轨迹，在按需、常驻、SpecBox 三种运行时上各跑一遍，对每个会话把每次工具调用前等沙箱准备好的时间加总，画出这个累计值在会话之间的分布。只统计准备时间，不含沙箱内的计算。按需的累计时间随步数增长，分布长尾明显；SpecBox 集中在一秒以内。相对按需降低到 1/4.53[[cum]]，与常驻相差 10.6%[[gap]]。</p>
   </section>
 
   <section class="panel">
@@ -122,6 +124,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/specbox/fig10.png" alt="QPS 从 1 到 20 时的 P99 端到端延迟、平均累计准备时间、峰值 CPU、峰值内存" loading="lazy"></button>
     </figure>
+    <p>Fig. 10 把并发从每秒 1 个会话逐步提到 20 个，三种运行时各跑一遍，四幅小图分别是 P99 端到端延迟、每个会话平均的累计沙箱准备时间、峰值 CPU 占用和峰值内存占用，横轴都是 QPS。</p>
     <div class="tbl"><table>
       <thead><tr><th>子图</th><th class="wrap">按需</th><th class="wrap">常驻</th><th class="wrap">SpecBox</th></tr></thead>
       <tbody>
@@ -161,7 +164,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/specbox/fig11.png" alt="10 轮会话中每轮的平均等待时间与冷启动次数：只做步内预热与加上跨步预取" loading="lazy"></button>
     </figure>
-    <p>比较只做步内预热（Reactive）和加上跨步预取（Proactive）。第 1 轮还没有历史转移，两者相近（约 0.5 秒）；从第 2 轮起分开，Proactive 的平均等待从 540 ms 降到 138 ms，第 10 轮为 97 ms[[turn]]，而 Reactive 升到 583 ms，相差 6.0 倍。冷启动次数上，Reactive 最多每轮 2.9 次，Proactive 保持在 0.24 到 0.83 次。</p>
+    <p>Fig. 11 取 10 轮的会话，比较 SpecBox 的两个版本：只做步内预热（Reactive）和加上跨步预取（Proactive）。左图是每一轮工具调用的平均等待时间，右图是每轮发生的冷启动次数，横轴是轮次。第 1 轮还没有历史转移，两者相近（约 0.5 秒）；从第 2 轮起分开，Proactive 的平均等待从 540 ms 降到 138 ms，第 10 轮为 97 ms[[turn]]，而 Reactive 升到 583 ms，相差 6.0 倍。冷启动次数上，Reactive 最多每轮 2.9 次，Proactive 保持在 0.24 到 0.83 次。</p>
   </section>
 
   <section class="panel s6">
@@ -183,7 +186,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/specbox/fig12.png" alt="1 MB 到 1000 MB 文件下带外传输与 JSON-RPC 的传输延迟" loading="lazy"></button>
     </figure>
-    <p>1 MB 时两者都在 3 ms 以内；JSON-RPC 随文件大小线性增长，100 MB 时 132 ms，1000 MB 时 1873 ms；带外传输几乎不变，1 GB 时只有 5.97 ms[[oob]]，相差 313 倍。代价是引擎和沙箱必须在一台主机上[[colocate]]。</p>
+    <p>Fig. 12 让引擎和沙箱之间传递 1 MB 到 1000 MB 的文件，比较两种方式的传输延迟：标准的 JSON-RPC 把文件序列化成文本随控制消息一起发送；带外传输经主机内共享内存传一个引用。1 MB 时两者都在 3 ms 以内；JSON-RPC 随文件大小线性增长，100 MB 时 132 ms，1000 MB 时 1873 ms；带外传输几乎不变，1 GB 时只有 5.97 ms[[oob]]，相差 313 倍。代价是引擎和沙箱必须在一台主机上[[colocate]]。</p>
   </section>
 
   <section class="panel s6">
