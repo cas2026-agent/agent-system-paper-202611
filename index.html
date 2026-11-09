@@ -3376,7 +3376,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         </tbody>
       </table></div>
       <div>
-        <p>合计 1186582 次请求、1213347 次工具调用；输入 2092 亿 token，其中 1971 亿命中缓存，输出只有 5.5 亿。一次 SWE-Bench 重放单独保留，用来和人的使用作对比，其余分析都不含它。只分析事先同意数据用于研究的用户。</p>
+        <p>数据来自 FreeInference，一个公开的大模型推理服务，提供 12 个模型，一部分在本地算力上服务，一部分转发给外部服务商的 API，每月处理超过 300 万次请求、5000 亿 token，全世界的用户在上面跑一百多种智能体。论文取 3.7 个月的流量，只看最常用的、由人驱动的生产智能体，按 user-agent 字段或系统提示识别是哪个框架，得到左表中十三个框架约 1.2 万个会话。每个请求记录输入输出文本和工具调用，以及时间戳、模型、匿名用户编号、输入输出和命中缓存的 token 数、完成时间和 TTFT。合计 1186582 次请求、1213347 次工具调用；输入 2092 亿 token，其中 1971 亿命中缓存，输出只有 5.5 亿。一次 SWE-Bench 重放单独保留，用来和人的使用作对比，其余分析都不含它。只分析事先同意数据用于研究的用户。</p>
         <p><b>会话要重建。</b>推理 API 是无状态的，多数框架不发送会话标识。按“后一个请求包含前一个请求的完整输入”去串联会在框架改写上下文时切得太碎，所以改为看后一个请求的历史里是否回放了前一次的模型输出（工具调用按调用 ID 匹配）。在自带会话标识的框架上检验，95% 的重建会话与框架给的会话一一对应<button class="cite" data-q="3">3</button>。重建时不设闲置上限，以免把长时间离开后继续的会话切开。</p>
       </div>
     </div>
@@ -3393,6 +3393,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig2.png" alt="(a) 每会话的步数；(b) 轮与会话时长；(c) 每次请求的 token；(d) 每会话的费用构成" loading="lazy"></button>
     </figure>
+    <p>Fig. 2 统计全部重建会话（不含 SWE-Bench 重放），四幅小图都是累积分布。(a) 每个会话的步数，分成三条线：用户发起的步、模型请求、工具调用；(b) 每一轮和每个会话从开始到结束的时长；(c) 每次请求的输入 token、其中未命中缓存的 token 和输出 token；(d) 按 Claude Fable 5 的价格算出每个会话的费用中缓存读取、普通输入、输出各占多少。</p>
     <div class="pair">
       <div>
         <h3>(a)(b) 会话由模型和工具驱动，跨越数小时</h3>
@@ -3411,6 +3412,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig3.png" alt="(a) 随步数变化的 token；(b) 上下文中各类内容的占比" loading="lazy"></button>
     </figure>
+    <p>Fig. 3 把所有会话按步数对齐，横轴是会话中的第几步，阴影是 25 到 75 分位的范围。(a) 是每一步请求中已缓存的输入、未命中的输入和输出的 token 数；(b) 把每一步的上下文按内容分类：系统提示、用户消息、助手消息（模型之前的回复，含工具调用）、工具结果，画出各类的占比。</p>
     <p>(a) 前几步未命中的输入中位数约 10K token，来自很长的系统提示和对代码仓库的初次探索，之后降到 1K 左右并继续下降。已缓存的前缀从几千增长到几十万，但增长变慢：前十步每步约增加 2.5K，过了一百步只增加约 330<button class="cite" data-q="8">8</button>。输出始终约 200。</p>
     <p>(b) 早期以系统提示为主；随后工具结果迅速累积，助手消息和工具历史合起来从第 10 步的 32% 增长到第 1000 步的 92%。在长会话里工具历史先达到峰值再下降，助手消息则持续增长，最终成为最大的一块。原因是框架的常见做法：删掉旧的工具输出，保留助手消息和其中的工具调用<button class="cite" data-q="9">9</button>。这也意味着上下文并不总是只增不减，后面的 context mutation 一节会量化这件事。</p>
   </section>
@@ -3420,7 +3422,8 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig4.png" alt="(a)(b) 两个外部模型的 prefill、decode、排队时间；(c) 会话时间构成；(d) 各部分加速一倍的效果" loading="lazy"></button>
     </figure>
-    <p><b>单次请求看 TTFT，TTFT 主要是排队。</b>(a)(b) 是两个转发到外部的模型。纯 prefill 的速度约每秒 8K token，而中位数请求未命中的输入不到 1K，纯 prefill 通常不到 0.1 秒；中位数约 4 秒的 TTFT 大部分是服务开销<button class="cite" data-q="10">10</button>。</p>
+    <p>Fig. 4 分两个层次看延迟。(a)(b) 是两个由 FreeInference 转发到外部服务商的模型，Minimax-M2.7 和 Kimi-K2.7-Code，把每次请求的 TTFT 和按 prefill 速度估算的纯 prefill 时间、decode 时间放在一起比较，延迟数字由外部服务商报告。(c) 把每个会话从开始到结束的时间分成用户闲置、工具执行、decode、prefill 四部分，求平均占比。(d) 是一个假设分析：去掉用户闲置时间，把每段工具间隔最多算 15 分钟，然后假设工具、prefill 或 decode 其中一项快一倍，算会话整体能快多少。</p>
+    <p><b>单次请求看 TTFT，TTFT 主要是排队。</b>(a)(b) 中，纯 prefill 的速度约每秒 8K token，而中位数请求未命中的输入不到 1K，纯 prefill 通常不到 0.1 秒；中位数约 4 秒的 TTFT 大部分是服务开销<button class="cite" data-q="10">10</button>。</p>
     <p><b>整个会话看，大部分时间不在模型上。</b>(c) 平均而言，用户闲置占会话时间的 50.3%，工具执行 21.7%，decode 18.1%，prefill 9.9%<button class="cite" data-q="11">11</button>。decode 多于 prefill，因为多数请求由本地模型服务，排队少、前缀复用高<button class="cite" data-q="12">12</button>。(d) 去掉用户闲置、每段工具间隔最多算 15 分钟，再假设某一部分快一倍：工具快一倍整体快 1.38 倍，prefill 和 decode 快一倍只快 1.09 倍和 1.16 倍<button class="cite" data-q="13">13</button>。</p>
   </section>
 
@@ -3443,6 +3446,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <tr><td>Batched Same、Mixed</td><td class="wrap">在一次模型回复里与同类工具、与其他工具一起发出的比例</td></tr>
       </tbody>
     </table></div>
+    <p>Fig. 5 把全部工具调用按 Table 5 归成若干类（shell 命令再按命令内容细分），每类画两项分布，箱子是 5 到 95 分位，菱形是均值：(a) 有效执行时间，即模型回复结束到下一个带着工具结果的请求到达的间隔减去估计的网络往返；(b) 工具结果加进上下文的 token 数。</p>
     <p><b>调用次数不等于开销。</b>Read、Interpreter、Edit、Search、File Ops 五类占调用的 60% 以上。但 Read 只占 16% 的调用，却贡献了 34% 的结果 token<button class="cite" data-q="14">14</button>；Interpreter 占 12% 的调用、17% 的等待时间；Ask User（向用户提问）只占 0.4% 的调用，却占 5.8% 的等待时间。</p>
     <p><b>多数很快，尾部很长。</b>(a) 读、改、搜这类本地操作中位数 0.9 到 1.7 秒；执行类更慢，Interpreter 2.8 秒、Build/Test 7.2 秒、Wait/Poll 11.7 秒；Subagent 中位数 13 秒、平均 100 秒，Ask User 要几分钟。均值远大于中位数，例如 Read 中位数不到 1 秒、均值 13.2 秒，部分尾部可能来自需要人工批准的命令<button class="cite" data-q="15">15</button>。(b) Read 的结果中位数 441 token，Edit、Write 不到 50 token。类别能提供调度线索，但类内差异很大，只按工具类型预测并不可靠。</p>
   </section>
@@ -3452,6 +3456,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig6.png" alt="(a) 串行与批量调用的完成时间随调用数变化；(b) 各类工具每次请求的调用数" loading="lazy"></button>
     </figure>
+    <p>Fig. 6 看一次模型回复里发出多个工具调用的情况。(a) 横轴是一个请求最终需要的工具调用数，纵轴是把这些调用全部完成所需的时间，分两种方式：模型每次只发一个、逐个往返（串行），或一次回复里一起发出（批量）。(b) 是各类工具在一次请求中被调用的次数分布。</p>
     <p>(a) 串行时，每多一个工具调用就多一次“模型回复加工具执行”的往返，完成时间大致线性增长；一次回复里批量发出时，完成时间几乎不随调用数增长<button class="cite" data-q="16">16</button>，P90 在 14 到 28 秒。但 84.5% 的请求只发出一个工具调用<button class="cite" data-q="17">17</button>，发出四个以上的只占 3%。67% 的会话至少批量调用过一次，批量调用中 71% 是一类工具的重复调用，主要是 Subagent、Browser、Read 这类只读操作；Edit、Write 很少一起发。</p>
   </section>
 
@@ -3460,6 +3465,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig7.png" alt="同步子智能体中最慢者与其他兄弟的比值" loading="lazy"></button>
     </figure>
+    <p>Fig. 7 只看同步派出多个子智能体、父智能体要等全部完成的情况。(a) 比较一组兄弟子智能体中最慢者与最快者、与中位者的耗时比值，并按时间分成模型和工具两部分；(b) 按派出的方式分组：按角色分工、按工作量分工和混合，比较组内墙钟时间的不均衡程度。</p>
     <p>只有 10.4% 的会话用了子智能体，80.6% 的调用只派出一个；67% 是同步的，父智能体等子智能体完成，只拿回最终结果。同时派出多个时，最慢的一个常比中位数慢 50%，比最快的慢 3 倍以上<button class="cite" data-q="18">18</button>，差距主要来自工具执行时间。(b) 按角色分工（如审阅、编辑、安全专家）比按工作量分工（如每个子智能体负责一个文件）更不均衡<button class="cite" data-q="19">19</button>，因为不同角色要做的工具工作差别更大。</p>
   </section>
 
@@ -3473,6 +3479,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig8.png" alt="(a) 按请求间隔分组的命中率；(b) 不同服务商的命中率随间隔变化；(c) 各类间隔的长度；(d) 各类间隔后的平均命中率" loading="lazy"></button>
     </figure>
+    <p>Fig. 8 用每次请求报告的命中缓存 token 数，看前缀在两次请求之间保留了多少。命中率指这次请求的输入中命中缓存的比例，请求间隔指它与所在会话上一次请求之间相隔多久。(a) 按间隔长短分组画命中率；(b) 只看服务相同开源模型的几家服务商（匿名为 A、B、C、D），画命中率随间隔的变化；(c) 把间隔按原因分为普通工具间隔、Ask User 工具（等用户回答）、子智能体执行和用户闲置，画各自的长度分布；(d) 是各类间隔之后那次请求的平均命中率。</p>
     <div class="pair">
       <div>
         <h3>(a)(b) 生产中实际的保留时间</h3>
@@ -3504,7 +3511,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
       </table></div>
       <figure class="fig">
         <button class="zoom" type="button"><img src="figures/sessions/fig9.png" alt="追加之后与改写之后那一步的命中率分布" loading="lazy"></button>
-        <figcaption><span class="fig-no">Fig. 9</span>追加之后的一步几乎全部命中，改写之后的一步命中率分布很散。</figcaption>
+        <figcaption><span class="fig-no">Fig. 9</span>把相邻两次请求分成两类：后一次只在末尾追加，或改写了前一次的上下文，画下一步请求命中率的分布。追加之后的一步几乎全部命中，改写之后的一步命中率分布很散。</figcaption>
       </figure>
     </div>
     <p class="cap">Table 7 的三列分别是：这类变化占全部步的比例、出现过它的会话占比、假设缓存永不过期时它造成的新 prefill 占比（%）。</p>
@@ -3524,7 +3531,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig11.png" alt="(a) 用户 API 费用随 TTL 变化；(b) 服务商的重算与存储成本随 TTL 变化" loading="lazy"></button>
     </figure>
-    <p>费用以 TTL 1 分钟时为 1。(a) 用户的 API 费用按 Claude Fable 5 价格计，15 分钟内迅速下降，之后基本持平，30 分钟时已在最低值的 4% 以内。(b) 服务商的成本把重算按每百万 token 1 美元、存储按每百万 token 每天 30 美元计算，后者依据 AWS 内存价格和 70B GQA 模型 FP16 下每 token 320 KB 的 KV 缓存<button class="cite" data-q="28">28</button>。在 15 分钟处最低，为 0.42 倍，之后存储的增加超过了重算的节省。这就是摘要里“15 分钟规则”的来源。</p>
+    <p>Fig. 11 沿用 Fig. 10 的重放模拟，把重算量和存储量换算成钱，费用以 TTL 1 分钟时为 1。(a) 用户的 API 费用按 Claude Fable 5 价格计，15 分钟内迅速下降，之后基本持平，30 分钟时已在最低值的 4% 以内。(b) 服务商的成本把重算按每百万 token 1 美元、存储按每百万 token 每天 30 美元计算，后者依据 AWS 内存价格和 70B GQA 模型 FP16 下每 token 320 KB 的 KV 缓存<button class="cite" data-q="28">28</button>。在 15 分钟处最低，为 0.42 倍，之后存储的增加超过了重算的节省。这就是摘要里“15 分钟规则”的来源。</p>
     <p class="mine"><b>本页说明：</b>15 分钟这个最优点由两个假设的价格之比决定。存储价格按内存计，如果 KV 缓存可以放到更便宜的 SSD 或分层存储上，最优 TTL 会向更长的方向移动；反过来，显存紧张时会更短。</p>
   </section>
 
@@ -3533,7 +3540,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig12.png" alt="缓存读取价格下降、框架减少改写后的 prefill 和 API 费用变化" loading="lazy"></button>
     </figure>
-    <p>框架改写上下文常常是为了缩短它、省钱。如果缓存读取更便宜，框架可能少做缩短上下文的改写。论文假设这类改写随读取价格从每百万 1 美元降到 0 而线性减少，上下文最多长到 1M token。结果是：TTL 为 15 分钟时新 prefill 最多反而增加约 5%，5 分钟时约 10%，因为上下文更长，一旦未命中要重算的也更多；只有读取几乎免费时才划算<button class="cite" data-q="29">29</button>。API 费用也一样：即使缓存永不过期，读取价格要低到每百万约 0.05 美元，多读的量才不超过省下的 prefill。结论是缩短上下文的改写有它的作用，带状态的 API 也应提供压缩这类控制上下文的手段。</p>
+    <p>Fig. 12 也是重放模拟，问的是如果把缓存读取降价，让框架不再频繁改写上下文，会不会更省。框架改写上下文常常是为了缩短它、省钱。如果缓存读取更便宜，框架可能少做缩短上下文的改写。论文假设这类改写随读取价格从每百万 1 美元降到 0 而线性减少，上下文最多长到 1M token。结果是：TTL 为 15 分钟时新 prefill 最多反而增加约 5%，5 分钟时约 10%，因为上下文更长，一旦未命中要重算的也更多；只有读取几乎免费时才划算<button class="cite" data-q="29">29</button>。API 费用也一样：即使缓存永不过期，读取价格要低到每百万约 0.05 美元，多读的量才不超过省下的 prefill。结论是缩短上下文的改写有它的作用，带状态的 API 也应提供压缩这类控制上下文的手段。</p>
   </section>
 
   <section class="panel s6">
@@ -3541,7 +3548,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig13.png" alt="加入改写和结束信号后，死块数量和服务商成本随 TTL 的变化" loading="lazy"></button>
     </figure>
-    <p>长 TTL 下的死块像内存泄漏：框架一直在分配 KV 块，却从不调用 free()<button class="cite" data-q="30">30</button>。模拟两个信号：mutate 表示某次改写使哪些块失效，end 表示会话结束、它的块全部释放。两者都用时，TTL 为 1 天的累积存储最多减少 36 倍<button class="cite" data-q="31">31</button>，服务商成本在很长的 TTL 下也能保持很低。论文进一步建议框架提供 pause（可以卸载）、resume（可以预取）这类会话生命周期的提示。</p>
+    <p>Fig. 13 在 Fig. 10 的模拟里加入框架发出的会话信号，(a) 是不同 TTL 下累积的死块数量，(b) 是服务商成本，比较不加信号、只加 mutate、只加 end、两者都加四种情况。长 TTL 下的死块像内存泄漏：框架一直在分配 KV 块，却从不调用 free()<button class="cite" data-q="30">30</button>。模拟两个信号：mutate 表示某次改写使哪些块失效，end 表示会话结束、它的块全部释放。两者都用时，TTL 为 1 天的累积存储最多减少 36 倍<button class="cite" data-q="31">31</button>，服务商成本在很长的 TTL 下也能保持很低。论文进一步建议框架提供 pause（可以卸载）、resume（可以预取）这类会话生命周期的提示。</p>
   </section>
 
   <div class="band">
@@ -3554,6 +3561,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig14.png" alt="基准重放与人驱动会话在轮时长、会话时长、每次请求输入、用户提示长度、缓存权衡上的对比" loading="lazy"></button>
     </figure>
+    <p>Fig. 14 把 FreeInference 上的人驱动会话和一次 SWE-Bench 重放（1035 个会话，同样经过这个服务）放在一起比较。(a) 是单轮时长，(b) 是会话的轮数和总时长，(c) 是每次请求的输入 token，(d) 是用户提示的长度，(e) 把两者分别送进 Fig. 10 的 TTL 模拟，看新 prefill 随 TTL 的变化。</p>
     <div class="tbl"><table>
       <thead><tr><th>指标（中位数）</th><th class="r">人驱动</th><th class="r">SWE-Bench</th><th class="wrap">原因</th></tr></thead>
       <tbody>
@@ -3571,7 +3579,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/sessions/fig15.png" alt="一轮之中各类工具占比随进度的变化：SWE-Bench 与人驱动会话" loading="lazy"></button>
     </figure>
-    <p>横轴是一轮内的进度。SWE-Bench 先读和搜（探索代码仓库），后执行、构建测试和提交，阶段分明。人驱动的会话里 Read 始终占不小的比例，修改和执行到后面才增多，还更多地用到浏览器等其他工具，阶段没有那么清楚。比较前把工具合并成八大类，因为 SWE-Bench 的智能体只能通过 shell 命令工作。</p>
+    <p>Fig. 15 把每一轮按进度从 0 到 1 归一化，统计每个进度位置上各类工具调用的占比，(a) 是 SWE-Bench 重放，(b) 是人驱动的会话。横轴是一轮内的进度。SWE-Bench 先读和搜（探索代码仓库），后执行、构建测试和提交，阶段分明。人驱动的会话里 Read 始终占不小的比例，修改和执行到后面才增多，还更多地用到浏览器等其他工具，阶段没有那么清楚。比较前把工具合并成八大类，因为 SWE-Bench 的智能体只能通过 shell 命令工作。</p>
   </section>
 
   <section class="panel s6">
