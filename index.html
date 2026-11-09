@@ -3766,6 +3766,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/xperf/fig7.png" alt="(a) 单次调用延迟的重放误差；(b) 用户请求端到端延迟的重放误差；(c) 并发重放时运行和排队调用数与原始运行的对比" loading="lazy"></button>
     </figure>
+    <p>Fig. 7 检验重放是否忠实，模型是 gpt-oss-120b，vLLM v0.19.0，H100 NVL。(a)(b) 把八个应用录下的用户请求逐个单独重放，一次只有一个请求在引擎上，(a) 比较每次模型调用的延迟与录制时的相对误差，(b) 比较每个用户请求端到端延迟的误差。(c) 是并发重放：取 Fig. 3 中 mini-SWE-agent 第一次运行的轨迹，预热后按原来的到达时间重放两小时，每秒读取引擎正在运行和排队的调用数，与原始运行的曲线比较。</p>
     <p><b>单独重放每个请求。</b>(a) 各应用单次调用的延迟与原始几乎一致，只有 ODR 有 4.6% 的调用误差超过 3%<button class="cite" data-q="14">14</button>：它并行发出很多调用，引擎一次处理不完，重放时排队的具体组合与录制时不同。(b) 但这不影响整个请求，所有应用的端到端延迟平均绝对百分比误差都低于 3%，包括 ODR<button class="cite" data-q="15">15</button>。</p>
     <p><b>并发重放。</b>(c) 把 Fig. 3 中第一次运行重放两小时：每秒采样的运行和排队调用数平均只差 1.4 和 1.6 个，累计排队时间差 2.9%<button class="cite" data-q="16">16</button>，请求延迟的平均绝对百分比误差为 1.9%。对照 Fig. 3 中两次真实运行之间 65% 的差距，重放把负载的波动降到了很小。</p>
   </section>
@@ -3780,7 +3781,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/xperf/fig8.png" alt="八个应用每个用户请求的端到端延迟 CDF" loading="lazy"></button>
     </figure>
-    <p>请求率低于饱和点。各应用的平均延迟相差很大，而且多数是长尾，P95 最高是 P50 的 6.60 倍<button class="cite" data-q="17">17</button>。长尾主要来自没有进展却一直在调用模型和工具、不肯停下来的智能体<button class="cite" data-q="18">18</button>。两个例外：DeerFlow 严格限制搜索轮数；MagenticOne 有一个负责监督的智能体，发现停滞就终止。深度研究类的最低延迟也很高，至少要做完一轮研究、写一份长报告。</p>
+    <p>Fig. 8 用 gpt-oss-120b 服务八个应用，每个应用用录下的执行图按泊松过程合成在线负载，请求率取在该应用的饱和点以下，跑两小时，画每个用户请求端到端延迟的累积分布。各应用的平均延迟相差很大，而且多数是长尾，P95 最高是 P50 的 6.60 倍<button class="cite" data-q="17">17</button>。长尾主要来自没有进展却一直在调用模型和工具、不肯停下来的智能体<button class="cite" data-q="18">18</button>。两个例外：DeerFlow 严格限制搜索轮数；MagenticOne 有一个负责监督的智能体，发现停滞就终止。深度研究类的最低延迟也很高，至少要做完一轮研究、写一份长报告。</p>
   </section>
 
   <section class="panel s6">
@@ -3788,7 +3789,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/xperf/fig9.png" alt="八个应用在不同请求率下每个输出 token 的延迟构成：排队、prefill、decode、工具" loading="lazy"></button>
     </figure>
-    <p>纵轴是端到端延迟除以 critical path 上的输出 token 数，按排队、prefill、decode、工具拆分。未饱和时 decode 占 60% 到 98%<button class="cite" data-q="19">19</button>，prefill 很小，只有提示最长（平均 38.8K token）的 DeerFlow 接近 23%，其余平均 4%。请求率升高，排队占比随之增长，在测试的最高请求率下最多占 69%<button class="cite" data-q="20">20</button>。</p>
+    <p>Fig. 9 对每个应用取几档请求率（横轴，从低到超过饱和点），把每个请求在 critical path 上的时间分成排队、prefill、decode、工具四部分。纵轴是端到端延迟除以 critical path 上的输出 token 数，按排队、prefill、decode、工具拆分。未饱和时 decode 占 60% 到 98%<button class="cite" data-q="19">19</button>，prefill 很小，只有提示最长（平均 38.8K token）的 DeerFlow 接近 23%，其余平均 4%。请求率升高，排队占比随之增长，在测试的最高请求率下最多占 69%<button class="cite" data-q="20">20</button>。</p>
     <p class="mine"><b>本页说明：</b>这里的工具时间是录下的固定时长，图中占比很小，因为这些应用的工具主要是网页搜索和数据库查询；所以这张图只能说明服务端各部分的相对大小。</p>
   </section>
 
@@ -3816,7 +3817,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/xperf/fig11.png" alt="不同请求率下各应用的 Tensor Core 与显存带宽利用率" loading="lazy"></button>
     </figure>
-    <p>命中率骤降的应用，接近饱和时显存带宽利用率反而下降。例如 CUGA 的请求率从每分钟 14.4 个升到 16.8 个，Tensor Core 利用率升高 55%，显存带宽利用率下降 16%。decode 主要消耗带宽，重算 prefill 主要消耗算力，所以 Tensor Core 利用率的上升并不代表效率提高，而是在重复计算<button class="cite" data-q="25">25</button>。</p>
+    <p>Fig. 11 在 Fig. 10 那批运行中，用 CUPTI 每 20 毫秒采样一次 GPU 的 Tensor Core 利用率和显存带宽利用率，按请求率画出均值。命中率骤降的应用，接近饱和时显存带宽利用率反而下降。例如 CUGA 的请求率从每分钟 14.4 个升到 16.8 个，Tensor Core 利用率升高 55%，显存带宽利用率下降 16%。decode 主要消耗带宽，重算 prefill 主要消耗算力，所以 Tensor Core 利用率的上升并不代表效率提高，多出来的是重复计算<button class="cite" data-q="25">25</button>。</p>
   </section>
 
   <section class="panel s6">
@@ -3833,7 +3834,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
         <button class="zoom" type="button"><img src="figures/xperf/fig13.png" alt="固定并发下延迟构成与吞吐随并发数变化" loading="lazy"></button>
       </figure>
     </div>
-    <p>这两组用 Qwen3.6-35B-A3B。两个应用趋势相反。mini-SWE-agent 请求越多吞吐越低：批处理从 25 个增加到 200 个时下降 38%<button class="cite" data-q="26">26</button>，并发从 10 增加到 50 时下降 35%，都是缓存被冲掉的结果。DeerFlow 几乎没有可复用的前缀，没有东西可冲，并发越高 decode 的 batch 越大，吞吐反而上升（批处理多 35%；固定并发从 4 到 36，每分钟完成数从 0.64 到 0.95）。</p>
+    <p>这两组换用 Qwen3.6-35B-A3B，只看 mini-SWE-agent 和 DeerFlow 两个应用。Fig. 12 是离线批处理：开始时一次发出全部请求（mini-SWE-agent 25 到 200 个，DeerFlow 10 到 80 个），看全部完成时的吞吐。Fig. 13 是固定并发：始终保持一定数量的用户请求在执行（mini-SWE-agent 10 到 50 个，DeerFlow 4 到 36 个），左边把每个请求的延迟拆成排队、prefill、decode、工具，右边是每分钟完成的请求数。两个应用趋势相反。mini-SWE-agent 请求越多吞吐越低：批处理从 25 个增加到 200 个时下降 38%<button class="cite" data-q="26">26</button>，并发从 10 增加到 50 时下降 35%，都是缓存被冲掉的结果。DeerFlow 几乎没有可复用的前缀，没有东西可冲，并发越高 decode 的 batch 越大，吞吐反而上升（批处理多 35%；固定并发从 4 到 36，每分钟完成数从 0.64 到 0.95）。</p>
   </section>
 
   <section class="panel s6">
@@ -3841,7 +3842,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/xperf/fig14.png" alt="1、2、4 个引擎时不同路由策略下的 decode 吞吐" loading="lazy"></button>
     </figure>
-    <p>mini-SWE-agent，固定并发，引擎从 1 个扩到 4 个，分布在两台服务器上，比较 vLLM-Router 的两种路由。轮转路由把一个请求的各次调用轮流发到不同引擎，前缀缓存的局部性被破坏，2 个和 4 个引擎只达到单引擎峰值吞吐的 1.41 倍和 2.26 倍<button class="cite" data-q="27">27</button>；按前缀缓存路由时几乎把一个请求的调用都发到一个引擎上，达到 1.88 倍和 3.61 倍<button class="cite" data-q="28">28</button>。</p>
+    <p>Fig. 14 用 Qwen3.6-35B-A3B 服务 mini-SWE-agent，按固定并发合成负载，引擎从 1 个扩到 4 个，每个引擎持有一份模型，分布在两台服务器上，纵轴是总的 decode 吞吐，比较 vLLM-Router 的两种路由。轮转路由把一个请求的各次调用轮流发到不同引擎，前缀缓存的局部性被破坏，2 个和 4 个引擎只达到单引擎峰值吞吐的 1.41 倍和 2.26 倍<button class="cite" data-q="27">27</button>；按前缀缓存路由时几乎把一个请求的调用都发到一个引擎上，达到 1.88 倍和 3.61 倍<button class="cite" data-q="28">28</button>。</p>
   </section>
 
   <section class="panel s6">
