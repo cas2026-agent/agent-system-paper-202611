@@ -18,7 +18,7 @@
       <button class="zoom" type="button"><img src="figures/cost/fig1.png" alt="三类推理方式" loading="lazy"></button>
     </figure>
     <p>三行是三种使用大模型的方式。(a) 普通用法，输入直接变成输出。(b) 静态推理，模型先在内部写出推理步骤再作答。(c) 动态推理，问“巴黎到纽约最便宜的航班”，模型想到需要查航班，调用搜索工具，读到结果，据此继续推理，直到给出答案。</p>
-    <p>近年提升大模型能力的重点，从扩大模型和数据转向在推理时多花计算，这叫测试时扩展：参数不变，回答问题时投入更多计算来换效果[[tts]]。这篇论文测 (c) 这类负载对硬件和基础设施意味着什么。它属于“负载刻画”研究：不提出新系统，而是把一类新负载的资源特征测清楚，为后续设计提供依据[[first]]。</p>
+    <p>近年提升大模型能力的重点，从扩大模型和数据转向在推理时多花计算，这叫测试时扩展：参数不变，回答问题时投入更多计算来换效果[[tts]]。这篇论文测 (c) 这类负载对硬件和基础设施意味着什么。它属于“负载刻画”研究：不提出新系统，目的是把一类新负载的资源特征测清楚，为后续设计提供依据[[first]]。</p>
   </section>
 
   <section class="panel s7">
@@ -96,46 +96,50 @@
 
   <div class="band">
     <h2>实验组：单个 request 内部发生了什么</h2>
-    <p>一次只处理一个 request，排除并发的影响，分别测调用次数、时间构成、GPU 使用和输入长度。比较对象是不用工具的 CoT 和普通聊天。</p>
+    <p>Fig. 4 到 Fig. 9 都在默认环境下测：vLLM 0.6.6 开启前缀缓存，Llama-3.1-8B-Instruct 跑在 GCP 上一台单卡 A100 40GB 的机器上，一次只处理一个 request，前一个完成才送下一个，排除并发的影响。被测的是五种智能体和四个 benchmark 的组合，不适合的组合不跑：CoT 不能操作网页，不跑 WebShop；LLMCompiler 的 DAG 式规划不适合 MATH 和 HumanEval 这种一步接一步的推理，不跑这两个。比较对象是不用工具的 CoT 和普通聊天（ShareGPT）。</p>
   </div>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 4</span><h2>一个 request 调用多少次大模型和工具</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig4.png" alt="LLM 与工具调用次数" loading="lazy"></button></figure>
-    <p>纵轴是每个 request 的平均调用次数，每个小图的刻度不同。CoT 只调用一次大模型，使用工具的智能体平均是它的 9.2 倍，LATS 平均达到 71 次[[lats-71]]，因为它扩展搜索树时要为每个子节点单独推理。调用次数是后面所有成本的第一个放大因素。</p>
+    <p>Fig. 4 按 benchmark 分成四幅小图：HotpotQA 上跑 CoT、ReAct、Reflexion、LATS、LLMCompiler 五种，WebShop 上跑除 CoT 外的四种，MATH 和 HumanEval 上跑 CoT、ReAct、Reflexion、LATS 四种。每根柱是这个组合下一个 request 平均调用大模型几次（LLM）、调用工具几次（Tool）。四幅图的纵轴刻度不同，WebShop 最高到 200 次。</p>
+    <p>CoT 只调用一次大模型，使用工具的智能体平均是它的 9.2 倍，LATS 平均达到 71 次[[lats-71]]，因为它扩展搜索树时要为每个子节点单独推理。调用次数是后面所有成本的第一个放大因素。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 5</span><h2>时间花在推理还是工具上</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig5.png" alt="延迟拆分" loading="lazy"></button></figure>
-    <p>柱子（左轴）是一个 request 总时间的构成，菱形（右轴）是它的总耗时。平均来看大模型推理占 69.4%，工具占 30.2%[[lat-split]]，但比例取决于工具快慢：WebShop 的工具很快，几乎全是红色；HotpotQA 的维基百科调用慢，黑色占比明显变大。</p>
+    <p>Fig. 5 沿用 Fig. 4 的组合，逐个处理 request，把每个 request 的时间分成四类：大模型推理（LLM）、工具执行（Tool）、两者同时进行的重叠部分（LLM+Tool，只在 LLMCompiler 里出现，它在生成计划的同时就把已经确定的工具调用发出去）、其他。柱子（左轴）是四类时间的占比，菱形（右轴）是一个 request 的平均总耗时（秒）。</p>
+    <p>平均来看大模型推理占 69.4%，工具占 30.2%[[lat-split]]，但比例取决于工具快慢：WebShop 的工具很快，几乎全是红色；HotpotQA 的维基百科调用慢，黑色占比明显变大。</p>
     <p>两部分难以同时进行，因为互相依赖：要有大模型的输出才知道调哪个工具[[dependency]]，下一次推理又要用到工具的结果。粉色是 LLMCompiler 把工具调用提前发出造成的重叠，也只占总时间的 18.2%[[overlap]]。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 6</span><h2>GPU 是否闲着</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig6.png" alt="GPU 时间拆分" loading="lazy"></button></figure>
-    <p>柱子是 GPU 时间用在 prefill、decode 和空闲上的比例，菱形是平均 GPU 利用率。HotpotQA 和 MATH 的工具在 CPU 或外部服务上运行，GPU 空闲最多占 54.5%[[idle]]。WebShop 工具快，HumanEval 工具本身用 GPU，空闲就不明显。可见 GPU 是否闲置取决于工具在哪里运行、运行多久。</p>
+    <p>Fig. 6 仍是逐个处理 request，看 GPU 这一侧：把处理一个 request 期间 GPU 的时间分成 prefill、decode 和空闲三类，柱子（左轴）是三类的比例；菱形（右轴）是平均 GPU 利用率，用 NVIDIA DCGM 测的正在工作的 GPU 计算单元所占比例。各工具在哪里执行决定了 GPU 等不等：HotpotQA 调用维基百科 API，MATH 调用 Wolfram Alpha 和 Python 计算器，都在 CPU 或外部服务上；WebShop 的网页在本地，操作只要约 20 毫秒；HumanEval 的测试生成工具本身也在 GPU 上调用大模型。</p>
+    <p>HotpotQA 和 MATH 的工具在 CPU 或外部服务上运行，GPU 空闲最多占 54.5%[[idle]]。WebShop 工具快，HumanEval 工具本身用 GPU，空闲就不明显。可见 GPU 是否闲置取决于工具在哪里运行、运行多久。</p>
     <p>GPU 工作时，74.1% 的时间是 decode，只有 4.7% 是 prefill，而 decode 受显存带宽限制[[decode]]，计算单元同样用不满。一个 request 内部挤不出更多并行，提高利用率只能靠同时处理多个 request。这引出了后面的并发实验。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 7</span><h2>每个 request 的耗时有多不确定</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig7.png" alt="端到端延迟分布" loading="lazy"></button></figure>
-    <p>这是 request 总耗时的分布。普通聊天集中，95% 在 9.7 秒内完成；ReAct 在 HotpotQA 和 WebShop 上的 p95 分别是 20.7 秒和 50.8 秒，右侧拖着长尾。长尾来自步数的不确定，有的问题很快答出，有的要反复搜索，一个 request 要多久事先无法预估，这对需要承诺响应时间的服务很不友好。</p>
+    <p>Fig. 7 比较三组负载的 request 总耗时分布，都是逐个处理、开启前缀缓存：普通聊天用 ShareGPT 的真实对话，每个 request 只做一次推理；另外两组是 ReAct 智能体分别做 HotpotQA 的多跳问答和 WebShop 的网购任务。横轴是总耗时，纵轴是 request 数，图中标出了各自的 95 分位。</p>
+    <p>普通聊天集中，95% 在 9.7 秒内完成；ReAct 在 HotpotQA 和 WebShop 上的 p95 分别是 20.7 秒和 50.8 秒，右侧拖着长尾。长尾来自步数的不确定，有的问题很快答出，有的要反复搜索，一个 request 要多久事先无法预估，这对需要承诺响应时间的服务很不友好。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 8</span><h2>每次 LLM call 的输入有多长</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig8.png" alt="输入输出 token 构成" loading="lazy"></button></figure>
-    <p>纵轴是 token 数。灰色是任务说明和示范例子，黑色是用户问题，绿色是之前模型输出的累积，黄色是之前工具结果的累积，红色是本次输出。绿色和黄色就是智能体多出来的部分：每次调用都要带上之前的推理和工具结果。HotpotQA 一开始约 1000 token，会涨到 3 到 4 倍。问答和网购任务的工具返回内容长，黄色大；数学和编程任务模型自己写得多，绿色大。LATS 是例外，它只带从根节点到当前节点的路径。</p>
+    <p>Fig. 8 沿用 Fig. 4 的组合，统计每次 LLM call 的 token 构成，按 benchmark 分四幅小图，纵轴是 token 数。每次调用的输入被拆成五类来源，加上这次的输出。浅灰是任务说明，深灰是示范例子，黑色是用户问题，绿色是之前模型输出的累积，黄色是之前工具结果的累积，红色是本次输出。绿色和黄色就是智能体多出来的部分：每次调用都要带上之前的推理和工具结果。HotpotQA 一开始约 1000 token，会涨到 3 到 4 倍。问答和网购任务的工具返回内容长，黄色大；数学和编程任务模型自己写得多，绿色大。LATS 是例外，它只带从根节点到当前节点的路径。</p>
     <p>输入变长的直接后果是显存：用工具的智能体每个 request 的 KV 缓存平均是 CoT 的 3 倍，最多 5.4 倍[[mem-3x]]。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 9</span><h2>前缀缓存能省下多少时间</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig9.png" alt="前缀缓存开关下的推理延迟" loading="lazy"></button></figure>
-    <p>每种智能体的两根柱子比较前缀缓存关闭和开启时单次推理的延迟，下部红色是 prefill，上部是 decode。相邻两次调用的开头完全相同，正是前缀缓存擅长的情况。开启后 prefill 时间平均减少 60.1%[[prefill-60]]，单次推理总时间平均减少 15.7%，减得没那么多是因为 decode 不受直接影响。CoT 只调用一次，几乎不受益。LATS 同时评估的子节点开头相同，可以共用一份 KV 缓存，显存需求平均减少 64.8%。</p>
+    <p>Fig. 9 仍是逐个处理 request，把每种智能体在各 benchmark 上的单次 LLM call 延迟各测两遍，一遍关闭 vLLM 的前缀缓存，一遍开启。每种智能体的两根柱子比较两者，下部红色是 prefill，上部是 decode。相邻两次调用的开头完全相同，正是前缀缓存擅长的情况。开启后 prefill 时间平均减少 60.1%[[prefill-60]]，单次推理总时间平均减少 15.7%，减得没那么多是因为 decode 不受直接影响。CoT 只调用一次，几乎不受益。LATS 同时评估的子节点开头相同，可以共用一份 KV 缓存，显存需求平均减少 64.8%。</p>
   </section>
 
   <div class="band">
@@ -146,20 +150,21 @@
   <section class="panel s4">
     <div class="ph"><span class="tag">实验</span><span class="fn">Fig. 10</span><h2>并发实验的系统</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig10.png" alt="智能体服务系统示意" loading="lazy"></button></figure>
-    <p>request 按泊松过程随机到达服务入口[[poisson]]，分给智能体工作进程。工作进程在需要推理时向 vLLM 发出 LLM call，多个进程的调用在 vLLM 里拼批；需要工具时调用外部工具。</p>
+    <p>Fig. 10 是并发实验用的服务系统。request 按泊松过程随机到达服务入口[[poisson]]，分给智能体工作进程。工作进程在需要推理时向 vLLM 发出 LLM call，多个进程的调用在 vLLM 里用默认的先来先服务调度连续拼批；需要工具时调用外部工具。模型仍是单卡 A100 上的 Llama-3.1-8B。</p>
   </section>
 
   <section class="panel s4">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 11</span><h2>一块 GPU 能撑多少 QPS</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig11.png" alt="p95 延迟随 QPS 变化" loading="lazy"></button></figure>
-    <p>横轴是每秒送入的 request 数，纵轴是 p95 延迟，曲线上翘的拐点就是可持续的最大吞吐[[knee]]。并发把 ReAct 的吞吐从 0.10 和 0.19 QPS 提高到 2.6 和 1.2 QPS，平均延迟只变为 2.1 倍[[concurrency]]，HotpotQA 工具慢、GPU 空闲多，提升也最多。即便如此，它们也只有普通聊天 6.4 QPS 的约四成和五分之一[[peak-qps]]。</p>
+    <p>Fig. 11 在这个系统上比较三组负载：普通聊天（ShareGPT），以及 ReAct 智能体做 HotpotQA 和 WebShop。逐步提高每秒送入的 request 数（横轴），测 request 端到端延迟的 p95（纵轴），每组负载各跑开启（实线）和关闭（虚线）前缀缓存两遍。曲线上翘的拐点就是可持续的最大吞吐[[knee]]。作为参照，逐个处理时 ReAct 在 HotpotQA 和 WebShop 上的平均延迟是 9.6 秒和 5.3 秒，吞吐只有 0.10 和 0.19 QPS。</p>
+    <p>并发把 ReAct 的吞吐从 0.10 和 0.19 QPS 提高到 2.6 和 1.2 QPS，平均延迟只变为 2.1 倍[[concurrency]]，HotpotQA 工具慢、GPU 空闲多，提升也最多。即便如此，它们也只有普通聊天 6.4 QPS 的约四成和五分之一[[peak-qps]]。</p>
     <p>实线和虚线比较前缀缓存的开关。聊天的吞吐只提高到 1.03 倍，ReAct 提高到 5.62 倍[[prefix-5x]]：没有前缀缓存时，长 prefill 占住 GPU，堵住同批其他 request 的 decode，智能体多次调用放大了这种阻塞。</p>
   </section>
 
   <section class="panel s4">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 12</span><h2>前缀缓存省下多少显存</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig12.png" alt="前缀缓存开关下的 KV 缓存占用" loading="lazy"></button></figure>
-    <p>纵轴是 KV 缓存占用的显存，W/o 是关闭前缀缓存，W/ 是开启，流量固定（HotpotQA 0.2 QPS，WebShop 0.1 QPS）。开启后平均和峰值占用分别下降 51.7% 和 63.5%[[kv-mem]]。单 request 实验中除 LATS 外看不到这个收益，并发时不同 request 之间才能共享前缀。</p>
+    <p>Fig. 12 取 Fig. 11 中 ReAct 的两个流量点，HotpotQA 每秒 0.2 个 request，WebShop 每秒 0.1 个，分别在关闭（W/o）和开启（W/）前缀缓存时记录 KV 缓存占用的显存，(a) 是运行期间的平均值，(b) 是最大值。开启后平均和峰值占用分别下降 51.7% 和 63.5%[[kv-mem]]。单 request 实验中除 LATS 外看不到这个收益，并发时不同 request 之间才能共享前缀。</p>
   </section>
 
   <div class="band">
@@ -172,7 +177,7 @@
     <div class="figgrid">
       <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig13.png" alt="设计点的精度-延迟与成本效率" loading="lazy"></button></figure>
       <div style="display:flex;flex-direction:column;gap:10px">
-        <p>每个点是一种配置（示范例子数、最大步数等不同）。上排纵轴是准确率，下排纵轴是准确率除以延迟，即性价比；横轴都是延迟，对数刻度。</p>
+        <p>Fig. 13 把五种智能体在四个 benchmark 上的许多种配置都跑一遍，配置之间的差别是示范例子数、最大步数、反思轮数、子节点数等参数。每种配置跑 50 道题，准确率按各 benchmark 的官方方法算：HotpotQA 和 MATH 用完全匹配（MATH 允许等价的数学写法），WebShop 用它自带的任务得分，HumanEval 算全部单元测试都通过的题目比例。每个点是一种配置。上排纵轴是准确率，下排纵轴是准确率除以延迟，即性价比；横轴都是延迟，对数刻度。</p>
         <p>所有智能体和任务上规律一致：计算越多准确率越高，但每多花一份计算换来的准确率越来越少[[diminishing]]。ReAct 延迟低、准确率中等；Reflexion 准确率略高、延迟明显增加；LATS 准确率更高、开销大得多；LLMCompiler 在 HotpotQA 上又快又准，在步骤前后依赖强的 WebShop 上会产生多余的工具调用，效率反而不如 ReAct。</p>
       </div>
     </div>
@@ -181,13 +186,13 @@
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 14</span><h2>放宽最大步数值得吗</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig14.png" alt="迭代预算的影响" loading="lazy"></button></figure>
-    <p>只改变 ReAct 允许的最大步数，横轴是这个上限。灰柱是平均延迟，黑柱是 p95 延迟，红线是准确率，蓝线是性价比。起初准确率上升，很快红线和灰柱都不再增长，黑柱却继续直线上升[[tail-linear]]。拉高尾部的是少数做不出来、把步数用光的任务，它们消耗大量计算，几乎不贡献准确率。蓝色菱形标出性价比最高的配置，它不在准确率最高处。</p>
+    <p>Fig. 14 只用 ReAct，在 HotpotQA 和 WebShop 上各跑一组，其余配置不变，只改变允许的最大步数，横轴是这个上限。灰柱是平均延迟，黑柱是 p95 延迟，红线是准确率，蓝线是性价比。起初准确率上升，很快红线和灰柱都不再增长，黑柱却继续直线上升[[tail-linear]]。拉高尾部的是少数做不出来、把步数用光的任务，它们消耗大量计算，几乎不贡献准确率。蓝色菱形标出性价比最高的配置，它不在准确率最高处。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结果</span><span class="fn">Fig. 15</span><h2>增加示范例子值得吗</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/cost/fig15.png" alt="few-shot 数量的影响" loading="lazy"></button></figure>
-    <p>横轴换成提示中示范例子的个数，其余读法与 Fig. 14 相同。增加例子起初明显提高准确率，之后收益变小甚至下降。平均延迟反而随例子增多而下降[[fewshot]]，因为好的例子让智能体用更少的步数完成任务，省下的步数抵消了提示变长的代价。</p>
+    <p>Fig. 15 同样只用 ReAct，在 HotpotQA 和 WebShop 上各跑一组，这次只改变提示中示范例子（few-shot）的个数，横轴是例子数。灰柱是平均延迟，红线是准确率，蓝线是归一化的性价比，红色菱形标准确率最高的配置，蓝色菱形标性价比最高的配置。增加例子起初明显提高准确率，之后收益变小甚至下降。平均延迟反而随例子增多而下降[[fewshot]]，因为好的例子让智能体用更少的步数完成任务，省下的步数抵消了提示变长的代价。</p>
   </section>
 
   <section class="panel s7">
