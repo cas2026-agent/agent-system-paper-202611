@@ -245,7 +245,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/llmservingsim/fig5.png" alt="RTX A6000 和 H100 上真机与模拟器的吞吐曲线" loading="lazy"></button>
     </figure>
-    <p>每张小图比较真实 vLLM 和模拟器在相同负载下每秒的吞吐。两行是两套 GPU：RTX A6000 上跑 Llama 3.1-8B 和 Phi-mini MoE，H100 上跑 Llama 3.1-70B 和 Mixtral 8×7B，后者张量并行度为 4。四列是四种部署：多个 dense 实例、单实例加前缀缓存、prefill 与 decode 分离、MoE。</p>
+    <p>Fig. 5 的负载是从 ShareGPT 抽取的 300 个 request，按每秒 10 个的速率到达，真机上用 vLLM 服务，模拟器用相同的模型、并行度和负载跑一遍。每张小图比较真实 vLLM 和模拟器每秒的吞吐。两行是两套 GPU：RTX A6000 上跑 Llama 3.1-8B 和 Phi-mini MoE，H100 上跑 Llama 3.1-70B 和 Mixtral 8×7B，后者张量并行度为 4。四列是四种部署：多个 dense 实例、单实例加前缀缓存、prefill 与 decode 分离、MoE。</p>
     <p>结论是模拟器既能跟上过程，也能算准总量。逐时刻的吞吐误差在 RTX A6000 上是 5.14%，H100 上是 3.29%，论文归因于动态组批、到达波动和阶段切换[[ts-err]]。合计整段运行的吞吐和延迟后，误差降到 0.99% 和 1.54%[[agg-err]]。两组数字差几倍，本页的解释是逐时刻的偏差有正有负，合计时相互抵消。所以论文摘要的约 1% 代表总量，看某个时段的吞吐要按 3% 到 5% 估计。</p>
     <p>曲线形状也和负载的设定吻合：300 个 request 按每秒 10 个到达，约 30 秒后不再有新 request，吞吐随后下降。RTX A6000 上的 MoE 明显更慢，跑到约 80 秒才结束，说明积压严重，这一格也是从图上看偏差最明显的。</p>
   </section>
@@ -265,7 +265,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/llmservingsim/fig7.png" alt="单实例和多实例下的显存占用与前缀命中率" loading="lazy"></button>
     </figure>
-    <p>吞吐对得上可能只是凑巧，这组实验检验模拟器内部的状态是否也和真机一致。负载是交替的突发和空闲，所以显存和命中率每 20 秒左右上一个台阶。</p>
+    <p>吞吐对得上可能只是凑巧，这组实验检验模拟器内部的状态是否也和真机一致。Fig. 7 在 RTX A6000 上做，模型和并行度与 Fig. 5 的 A6000 实验相同。request 从 ShareGPT 抽取，保留真实的长度和前缀复用；到达方式是人为合成的突发与空闲交替，以重现线上显存和命中率的起伏，所以显存和命中率每 20 秒左右上一个台阶。(a) 是单实例，只用 vLLM 自带的显存前缀缓存，块大小 16 token；(b) 是两个实例，接入 LMCache 共用一个主机内存的前缀缓存池，块大小 256 token。纵轴分别是显存（或主机内存）占用和前缀命中率，实线是真机，虚线是模拟器。</p>
     <div class="fb">
       <h3>(a) 单实例，只用显存缓存（vLLM 自带）</h3>
       <p>显存从约 15 GB 涨到约 31 GB，命中率升到约 26%，平均误差 0.93%[[mem-single]]。起点的 15 GB 本页推断主要是模型权重，之后增加的是缓存下来的 KV。</p>
@@ -282,6 +282,7 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/llmservingsim/fig8.png" alt="与现有模拟器比较的准确度和模拟耗时" loading="lazy"></button>
     </figure>
+    <p>Fig. 8 把 LLMServingSim 2.0 与 TokenSim、Vidur、APEX 和上一版 LLMServingSim 放在相同的几种部署下比较：多个 dense 实例、单实例加前缀缓存、prefill 与 decode 分离、MoE。每个模拟器算出的吞吐（TPS）、TTFT、TPOT 都除以真实 GPU 系统上 vLLM 的实测值，(a) 是这个比值，(b) 是各模拟器跑完一次模拟花的时间。某个模拟器不支持的部署标为不可用。论文没有写明 Fig. 8 对应的是哪套 GPU。</p>
     <h3 class="sub">(a) 准确度：相对真实 vLLM 的比值，1.00 表示完全一致</h3>
     <div class="tbl"><table>
       <thead><tr><th>部署</th><th>指标</th><th class="r">TokenSim</th><th class="r">Vidur</th><th class="r">APEX</th><th class="r">LLMServingSim 2.0</th></tr></thead>
