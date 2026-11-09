@@ -4942,7 +4942,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/simthesizer/fig8.png" alt="未扩展的 Simthesizer 与 vLLM 在 mini-SWE-bench 和 tau-bench 上的吞吐随时间对比" loading="lazy"></button>
     </figure>
-    <p>用 mini-SWE-bench 和 tau-bench 的智能体负载，与真实 vLLM 比较 240 秒内的生成吞吐。工具调用事先在主机上执行并记下耗时，模拟时在对应阶段重放<button class="cite" data-q="13">13</button>。dense 模型（Llama3.1-8B）几乎重合；MoE 模型（Qwen3-30B-A3B）偏差更明显，因为专家路由按统计模型估计，没有用每个请求实际的路由<button class="cite" data-q="14">14</button>。</p>
+    <p>实验都在一台装两块 RTX Pro 6000 Blackwell、Intel Xeon Gold 6326 CPU 的机器上做，真实系统用 vLLM 0.19.1。Fig. 8 检验还没有做任何扩展的 Simthesizer 能不能模拟智能体负载：从 mini-SWE-bench 和 tau-bench 各抽 50 到 100 个请求，在真实系统上跑一遍，录下模型输出和工具调用轨迹，再在模拟器里重放；两个模型是 dense 的 Llama3.1-8B 和 MoE 的 Qwen3-30B-A3B，四幅小图是两个负载乘两个模型，横轴是时间（240 秒），纵轴是每秒生成 token 数，比较真实 vLLM 和模拟器两条曲线。工具调用事先在主机上执行并记下耗时，模拟时在对应阶段重放<button class="cite" data-q="13">13</button>。dense 模型（Llama3.1-8B）几乎重合；MoE 模型（Qwen3-30B-A3B）偏差更明显，因为专家路由按统计模型估计，没有用每个请求实际的路由<button class="cite" data-q="14">14</button>。</p>
     <div class="tbl"><table>
       <thead><tr><th>误差 %（Table III）</th><th class="r">SWE，8B</th><th class="r">SWE，30B</th><th class="r">tau，8B</th><th class="r">tau，30B</th></tr></thead>
       <tbody>
@@ -4963,6 +4963,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/simthesizer/fig10.png" alt="三个功能扩展后各模拟器吞吐、TTFT、TPOT、ITL 的平均和中位误差" loading="lazy"></button>
     </figure>
+    <p>Fig. 9 和 Fig. 10 检验扩展是否准确。设定三项三个模拟器原本都不支持的功能：FP8 的 KV 缓存量化、EAGLE3 投机解码（这两项用 Qwen3-32B）、Mamba 混合模型支持（用 Nemotron-3-Nano-30B-A3B）。一个编码智能体（通过 OpenAI Codex 0.118.0 使用的 GPT-5.4，推理强度 xhigh）和相同的 harness，分别把每项功能加进 Simthesizer、LLMServingSim 2.0 和 Vidur，三者拿到的提示、参考资料、规格和 profile 数据完全相同；每项扩展独立做多次，不加人工干预，结果取平均。之后用扩展后的模拟器模拟真实 vLLM 上开了这项功能的运行（负载是从 ShareGPT 抽的 400 个请求）。Fig. 9 是各模拟器与 vLLM 的生成吞吐曲线，Fig. 10 是吞吐、TTFT、TPOT、ITL 相对 vLLM 的平均误差 (a) 和中位误差 (b)。</p>
     <p>KV 缓存量化只需要跟踪显存和量化开销，三个模拟器误差都低。投机解码和 Mamba 混合模型要同时改调度、模型结构和性能模型，Simthesizer 的误差明显最低，例如 Mamba 混合模型的平均 TTFT 误差约 11%，两个对照约 82%。由于智能体、harness、规格和 profile 数据都相同，论文认为差别来自底层模拟器<button class="cite" data-q="15">15</button>：模块化接口让扩展局限在一处，固定流程则要牵动多个耦合的部件。总体平均吞吐误差 2.51% 对 6.03%。</p>
   </section>
 
@@ -4979,7 +4980,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/simthesizer/fig12.png" alt="Codex 与 Claude Code 分别实现投机解码后的模拟吞吐与 vLLM 对比" loading="lazy"></button>
     </figure>
-    <p>换成 Claude Code（Opus 4.7）做同样的投机解码扩展，两者的平均误差分别为 4.1% 和 4.9%<button class="cite" data-q="17">17</button>，harness 不依赖特定的智能体。</p>
+    <p>Fig. 12 只看投机解码这一项：分别让 Codex（GPT-5.4）和 Claude Code（Opus 4.7，推理强度 high，2.1.204 版）在 Simthesizer 上完成扩展，比较两个扩展后的模拟器与 vLLM 的生成吞吐曲线。换成 Claude Code 做同样的投机解码扩展，两者的平均误差分别为 4.1% 和 4.9%<button class="cite" data-q="17">17</button>，harness 不依赖特定的智能体。</p>
   </section>
 
   <section class="panel s6">
@@ -4987,7 +4988,7 @@ details.qbox summary span { font-weight: 400; color: var(--muted); font-size: 12
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/simthesizer/fig11.png" alt="三个功能扩展后，三个模拟器在 ShareGPT 负载上的模拟耗时" loading="lazy"></button>
     </figure>
-    <p>ShareGPT 负载下，Simthesizer 平均比 LLMServingSim 2.0 快 164.9 倍、比 Vidur 快 6.65 倍<button class="cite" data-q="18">18</button>。论文的解释是已有模拟器没有模块化的边界，扩展逻辑直接写进模拟流程，每个模拟迭代都多了开销<button class="cite" data-q="19">19</button>。Mamba 混合模型这一项 Simthesizer 用了约 23 秒，因为各层结构不同，它不能只模拟一层再复用，要逐层模拟。</p>
+    <p>Fig. 11 用 Fig. 9 那三个扩展后的模拟器，在 ShareGPT 负载上各跑一次，比较完成模拟所花的墙钟时间。ShareGPT 负载下，Simthesizer 平均比 LLMServingSim 2.0 快 164.9 倍、比 Vidur 快 6.65 倍<button class="cite" data-q="18">18</button>。论文的解释是已有模拟器没有模块化的边界，扩展逻辑直接写进模拟流程，每个模拟迭代都多了开销<button class="cite" data-q="19">19</button>。Mamba 混合模型这一项 Simthesizer 用了约 23 秒，因为各层结构不同，它不能只模拟一层再复用，要逐层模拟。</p>
     <p class="mine"><b>本页说明：</b>这里比较的是三个模拟器各自由智能体加入新功能之后的速度，不是原生版本之间的速度，差距中包含了“扩展写得好不好”。另外从图上看，Mamba 混合模型一项 Simthesizer 与 Vidur 都约 23 秒，在这项上并不更快。</p>
   </section>
 
