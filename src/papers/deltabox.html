@@ -17,7 +17,8 @@
     <figure class="fig">
       <button class="zoom" type="button"><img src="figures/deltabox/fig1.png" alt="SWE-bench 通过率：MCTS 与 RL 训练带来的提升" loading="lazy"></button>
     </figure>
-    <p>纵轴是 SWE-bench 的通过率。左图橙色是一条路走到底的智能体，蓝色是用蒙特卡洛树搜索（MCTS）的智能体，三个模型都提高了 4.7 到 6.7 个百分点；右图橙色是原始模型，蓝色是强化学习训练后的模型，提高了 19.2 到 29.4 个百分点。搜索和训练是目前提升编程智能体最有效的两条路，而两者都要求能快速地保存和恢复沙箱的完整状态（文件和进程）[[abstract-cr]]。</p>
+    <p>Figure 1 的数字不是 DeltaBox 自己测的，是从已有工作中整理出来的，用来说明搜索和训练的收益有多大。(a) 在 SWE-bench Lite 上比较每个模型的两种用法：按 ReAct 一条路走到底（橙色），和用蒙特卡洛树搜索（MCTS）探索多条路径（蓝色），模型是 GPT-4o、Qwen-2.5-72B、DeepSeek-V2.5。(b) 在 SWE-bench Verified 上比较原始模型（橙色）和经过强化学习训练的版本（蓝色），模型是 Llama-3.3-70B、Qwen2.5-72B、Qwen3-32B。纵轴都是通过率。</p>
+    <p>(a) 中 MCTS 让三个模型提高了 4.7 到 6.7 个百分点；(b) 中强化学习训练提高了 19.2 到 29.4 个百分点，例如 Llama-3.3-70B 从 5.4% 到 34.8%。搜索和训练是目前提升编程智能体最有效的两条路，而两者都要求能快速地保存和恢复沙箱的完整状态（文件和进程）[[abstract-cr]]。</p>
     <p>两种需求的形态不同。树搜索是纵向的，要随时回到任意一个历史节点；Best-of-N 是横向的，要把初始沙箱快速复制 N 份[[two-axes]]。强化学习训练每一步都要从一个准备好的状态开出几十到上百个沙箱，现在靠新建 Docker 容器或从虚拟机快照恢复，单次就要几百毫秒到几秒[[rl]]。保存和恢复的次数随搜索深度、分支数和训练步数成倍增长，单次开销哪怕只有一秒，总量也会压过模型推理本身。</p>
   </section>
 
@@ -212,7 +213,7 @@
         <tr><td>开销拆解</td><td class="wrap">时间和存储花在哪里？</td><td class="wrap">操作步骤、文件大小、清理策略</td><td class="wrap">各步耗时、写入字节、镜像占用</td></tr>
       </tbody>
     </table></div>
-    <p>搜索实验的负载是用 Qwen3-Coder-30B 在 SWE-bench Verified 上录下的 MCTS 轨迹，按项目特点分成四类：Django 进程大；SymPy 以读为主；Astropy、Matplotlib、scikit-learn、Xarray 等科学计算项目内存占主导；pylint、requests、pytest 等小项目最轻。这种分法覆盖了进程状态重和文件状态重两个极端。</p>
+    <p>实验平台是一台四路服务器，96 个物理核、760 GiB 内存，数据和快照放在一块 400 GB 的 NVMe SSD 上；强化学习实验另用一台 4 卡、每卡 96 GB 的 GPU 节点，这台节点也负责运行生成 MCTS 轨迹的 Qwen3-Coder-30B。每个 DeltaBox 沙箱是一台 4 vCPU、8 GB 内存的 Firecracker 虚拟机，根文件系统是 XFS，目标仓库的源码和 conda 环境放在只读的 XFS 数据盘上，上面叠 overlayfs。搜索实验的负载是用 Qwen3-Coder-30B 在 SWE-bench Verified 上录下的 MCTS 轨迹，按项目特点分成四类：Django 进程大；SymPy 以读为主；Astropy、Matplotlib、scikit-learn、Xarray 等科学计算项目内存占主导；pylint、requests、pytest 等小项目最轻。这种分法覆盖了进程状态重和文件状态重两个极端。</p>
   </section>
 
   <section class="panel s5">
@@ -251,7 +252,7 @@
       <div class="row"><span class="name">小项目</span><div class="track"><div class="bar a" data-v="1.02"><i>1.02 倍</i></div><div class="bar g" data-v="1.93"><i>1.93 倍</i></div></div></div>
       <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="0.5">0.5</span><span data-t="1">1</span><span data-t="1.5">1.5</span><span data-t="2">2</span></div></div>
     </div>
-    <p>单次操作快不一定等于总时间短，这个实验放进完整搜索验证。指标是 30 轮 MCTS 的总耗时除以理想耗时（只算大模型和命令执行），1 倍表示沙箱操作完全不花时间。四组的理想耗时分别是 90.5、70.1、83.1、36.2 秒。DeltaBox 只多出 1% 到 2%，E2B 多出 30% 到 93%，也就是 E2B 有 23% 到 48% 的总时间花在保存和恢复沙箱上[[e2e]]。</p>
+    <p>Figure 6 把录下的 30 轮 MCTS 轨迹（Qwen3-Coder-30B 生成）在 DeltaBox 和自己部署的 E2B（增量模式）上完整跑一遍，四组柱对应四类项目。为了公平，E2B 直接调用它的暂停和恢复原语，只计沙箱存档恢复本身的开销，不计 E2B 控制面的开销。单次操作快不一定等于总时间短，这个实验放进完整搜索验证。指标是 30 轮 MCTS 的总耗时除以理想耗时（只算大模型和命令执行），1 倍表示沙箱操作完全不花时间。四组的理想耗时分别是 90.5、70.1、83.1、36.2 秒。DeltaBox 只多出 1% 到 2%，E2B 多出 30% 到 93%，也就是 E2B 有 23% 到 48% 的总时间花在保存和恢复沙箱上[[e2e]]。</p>
     <p>小项目上 E2B 的比例最差，原因在分母：小项目的大模型调用和命令执行本身短，每轮固定的近一秒沙箱开销所占比例就大。这也预示了一个趋势，大模型推理越快，沙箱开销在总时间里越显眼，毫秒级的读档就越重要。</p>
   </section>
 
@@ -294,13 +295,14 @@
       <div class="row"><span class="name">N = 64</span><div class="track"><div class="bar a" data-v="5.47"><i>5.47</i></div><div class="bar b" data-v="14.74"><i>14.74</i></div></div></div>
       <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="4">4</span><span data-t="8">8</span><span data-t="12">12</span><span data-t="16">16</span></div></div>
     </div>
-    <p>这个实验只测内核 fork，看规模变大时 fork 会不会成为瓶颈。做法是从一个约 15 MB 的智能体模板一次 fork 出 N 个子进程。N 增大 64 倍，中位耗时只增大约 10 倍，开销主要是复制页表；每个子进程实际只多占约 11 MB 内存，大部分页仍与模板共享。在目标规模上 fork 不是瓶颈[[fork-not-bottleneck]]。</p>
+    <p>Table 3 只测内核 fork，不带虚拟机、overlayfs 和 CRIU，看规模变大时 fork 会不会成为瓶颈。模板是 DeltaBox 的智能体进程，堆里装着真实的搜索轨迹，常驻约 15 MB；轨迹取自 18 条 SWE-bench MCTS 搜索（Qwen3-Coder-30B 和 MiMo V2.5-Pro 各在 Django、SymPy、Xarray 上跑 3 条），每条重复 5 次，表中是各条轨迹中位数的中位数。做法是从模板一次 fork 出 N 个子进程。N 增大 64 倍，中位耗时只增大约 10 倍，开销主要是复制页表；每个子进程实际只多占约 11 MB 内存，大部分页仍与模板共享。在目标规模上 fork 不是瓶颈[[fork-not-bottleneck]]。</p>
   </section>
 
   <section class="panel s7">
     <div class="ph"><span class="tag">结果</span><span class="fn">Figure 7</span><h2>强化学习训练时 GPU 还要等沙箱吗</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig7.png" alt="RL 扇出：沙箱扇出延迟、生成与训练时间、GPU 占用率" loading="lazy"></button></figure>
-    <p>左图把完整的沙箱算进来：横轴是一次开出的沙箱数 N，纵轴是总耗时（对数刻度）。每个沙箱都要读一遍父进程写过的 64 MiB 数据并校验，确保内存真的被继承。DeltaBox 比 CubeSandbox 和 E2B 低一个数量级以上。中图是训练 Qwen2.5-7B 时生成回复和训练的耗时，N 为 64 时训练要 4.51 秒。</p>
+    <p>Figure 7 模拟树形强化学习一步要做的事：从一个冻结的源沙箱一次开出 N 个（1、4、16、64）带内存的子沙箱，每个子沙箱生成回复后参与训练。(a) 把完整的沙箱算进来，三种沙箱都用各自原生的分叉方式：DeltaBox 用 fork_n，腾讯的 CubeSandbox v0.3.0 用 clone，E2B 用先建快照再创建；源进程先写 64 MiB 数据，每个子沙箱都要读一遍并校验，确保内存真的被继承。E2B 的 N=64 是分 4 批、每批并发 16 个完成的。横轴是 N，纵轴是总耗时（对数刻度）。(b) 在 4 卡 GPU 节点上测 Qwen2.5-7B 用 vLLM 批量生成回复（输入 256、输出 512 token）的时间，和用 LoRA（秩 16）做一次前向加反向训练的时间。(c) 由 (a)(b) 算出同步训练时 GPU 在干活的时间比例。</p>
+    <p>(a) 中 DeltaBox 比 CubeSandbox 和 E2B 低一个数量级以上。(b) 中 N 为 64 时训练要 4.51 秒。</p>
     <p>同步强化学习每一步是“开沙箱、生成回复、训练”串行进行，开沙箱时 GPU 只能空等。右图由左、中两图算出：GPU 利用率 =（生成时间 + 训练时间）÷（开沙箱时间 + 生成时间 + 训练时间）。</p>
     <div class="bars" data-lin="0,100" style="--lw:96px">
       <div class="legend"><span><i class="sw a"></i>N = 16</span><span><i class="sw b"></i>N = 64</span><span class="muted">同步训练时 GPU 在干活的时间比例 %</span></div>
@@ -330,13 +332,13 @@
   <section class="panel s7">
     <div class="ph"><span class="tag">结果</span><span class="fn">Figure 8</span><h2>后台预热来得及吗</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig8.png" alt="CoW 缺页被吸收比例随空闲窗口变化" loading="lazy"></button></figure>
-    <p>恢复后智能体第一次写内存页时要复制，后台预热想抢在它前面完成。横轴是恢复后智能体的空闲时间（对数刻度），纵轴是写时复制的停顿被提前处理掉的比例，每个绿点是一次恢复。空闲超过约 100 毫秒，比例就接近 100%；黄色阴影是实际观察到的空闲时间（0.5 到 8 秒），全部落在这个区域，因为恢复后智能体通常要先等大模型回复。</p>
+    <p>Figure 8 取 50 次 SWE-bench MCTS 搜索中的读档事件，人为设定读档后智能体空闲多久再开始写内存，测后台预热能提前处理掉多少写时复制。恢复后智能体第一次写内存页时要复制，后台预热想抢在它前面完成。横轴是恢复后智能体的空闲时间（对数刻度），纵轴是写时复制的停顿被提前处理掉的比例，每个绿点是一次恢复。空闲超过约 100 毫秒，比例就接近 100%；黄色阴影是在 4 卡推理下由大模型驱动的 3817 次真实读档中观察到的空闲时间，1 到 99 分位为 0.5 到 8 秒，全部落在这个区域，因为恢复后智能体通常要先等大模型回复。</p>
   </section>
 
   <section class="panel s7">
     <div class="ph"><span class="tag">结果</span><span class="fn">Figure 9</span><h2>每次编辑要写多少数据</h2></div>
     <figure class="fig"><button class="zoom" type="button"><img src="figures/deltabox/fig9.png" alt="每次编辑的 copy-up 字节与物理 I/O" loading="lazy"></button></figure>
-    <p>这个实验检验 reflink 是否解决了写放大。横轴是被编辑文件的大小，纵轴是每次编辑写了多少字节（对数刻度），黄色阴影是智能体编辑的常见大小。上半张是 copy-up 复制的数据量：ext4 和不开 reflink 的 XFS 随文件变大一路上升，因为改一个字节也要复制整个文件；开 reflink 后只复制被改的 4 KB 块，复制量几乎与文件大小无关[[edits-small]]。下半张是实际写盘量，小文件主要得益于 XFS 元数据开销小（1–8 KB 档从 132 KB 降到 26 KB），大文件主要得益于 reflink（128–256 KB 档从 315 KB 降到 141 KB）。</p>
+    <p>Figure 9 把真实 SWE-bench 智能体对文件的编辑在三种文件系统配置上重放：ext4、不开 reflink 的 XFS、开 reflink 的 XFS，都叠在 overlayfs 下面，检验 reflink 是否解决了写放大。编辑按被改文件的大小分档，每档取中位数。横轴是被编辑文件的大小，纵轴是每次编辑写了多少字节（对数刻度），黄色阴影是智能体编辑的常见大小。上半张是 copy-up 复制的数据量：ext4 和不开 reflink 的 XFS 随文件变大一路上升，因为改一个字节也要复制整个文件；开 reflink 后只复制被改的 4 KB 块，复制量几乎与文件大小无关[[edits-small]]。下半张是实际写盘量，小文件主要得益于 XFS 元数据开销小（1–8 KB 档从 132 KB 降到 26 KB），大文件主要得益于 reflink（128–256 KB 档从 315 KB 降到 141 KB）。</p>
   </section>
 
   <section class="panel s5">
@@ -348,13 +350,13 @@
           <div class="row"><span class="name">Sympy</span><div class="track"><div class="bar g" data-v="69"><i>69</i></div><div class="bar a" data-v="38"><i>38</i></div></div></div>
           <div class="axis"><span></span><div class="ticks"><span data-t="0">0</span><span data-t="40">40</span><span data-t="80">80</span></div></div>
         </div>
-    <p>只清理搜索不会再访问的节点，搜索结束时镜像占用减少 46% 到 63%[[gc]]。</p>
-    <p>还有一个可选的省内存模式：对只读、可重复执行的命令（比如查看文件）不拍内存照片也不加层，只记一个标记，实测 62% 的步骤可以这样处理。代价是回到这样的节点时要把那条命令再执行一遍，所以只在存档占用的内存成为瓶颈时启用[[lw]]。</p>
+    <p>Figure 10(b) 取 Django、Xarray、SymPy 等 9 个 SWE-bench 实例的 MCTS 轨迹，用真实的 CRIU 写镜像重放（智能体进程约 5 MB），比较搜索结束时 CRIU 镜像占用的存储：保留全部存档，或按可达性清理。只清理搜索不会再访问的节点，搜索结束时镜像占用减少 46% 到 63%[[gc]]。</p>
+    <p>还有一个可选的省内存模式：对只读、可重复执行的命令（比如查看文件）不拍内存照片也不加层，只记一个标记。Figure 10(a) 在 9 个 SWE-bench 仓库的 87 次 MCTS 搜索中统计 1689 次存档，62% 的步骤可以这样处理。代价是回到这样的节点时要把那条命令再执行一遍，所以只在存档占用的内存成为瓶颈时启用[[lw]]。</p>
   </section>
 
   <section class="panel s6">
     <div class="ph"><span class="tag">结论</span><h2>结论</h2></div>
-    <p>智能体相邻两个状态非常相似，DeltaBox 据此放弃整体复制，改为按变化保存和恢复[[conclusion]]。它没有发明新的存储格式，而是把 Linux 里本来就以“变化”为单位工作的两个机制，overlayfs 的层和 fork 的写时复制，改造成可以频繁、安全使用的存档原语：DeltaFS 让层能在运行中增删，DeltaCR 让冻结的进程能作为模板反复 fork，并用 CRIU 镜像兜底。</p>
+    <p>智能体相邻两个状态非常相似，DeltaBox 据此放弃整体复制，改为按变化保存和恢复[[conclusion]]。它没有发明新的存储格式，做法是把 Linux 里本来就以“变化”为单位工作的两个机制，overlayfs 的层和 fork 的写时复制，改造成可以频繁、安全使用的存档原语：DeltaFS 让层能在运行中增删，DeltaCR 让冻结的进程能作为模板反复 fork，并用 CRIU 镜像兜底。</p>
     <p>结果是存档对智能体没有可见的等待，读档约 1.86 毫秒，SWE-bench 搜索中沙箱开销从 E2B 的 23% 到 48% 降到 1% 到 2%，强化学习训练中 GPU 几乎不再等沙箱。</p>
   </section>
 
